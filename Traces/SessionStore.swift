@@ -1,5 +1,10 @@
 import Foundation
 
+// MARK: - Last working session persistence
+// Stores the user's current working set so restarting the app does not lose
+// imported events, selected event, generated ICS text, or file context.
+
+/// Snapshot of the app state that should be restored on next launch.
 struct TracesSession: Sendable {
     let events: [ICSEvent]
     let selectedEventID: String?
@@ -8,13 +13,20 @@ struct TracesSession: Sendable {
     let savedAt: Date
 }
 
+/// Actor-backed local session store.
+///
+/// This intentionally uses manual JSON dictionaries instead of direct Codable
+/// actor calls. That keeps Swift 6 actor isolation warnings away from model
+/// initializers and makes schema changes explicit.
 actor SessionStore {
     static let shared = SessionStore()
 
+    // Versioned key. Bump when persisted schema becomes incompatible.
     private let defaultsKey = "traces.lastSession.v3"
 
     private init() {}
 
+    /// Loads the last session, returning nil when no session exists or decoding fails.
     func load() -> TracesSession? {
         guard let data = UserDefaults.standard.data(forKey: defaultsKey) else {
             return nil
@@ -32,6 +44,7 @@ actor SessionStore {
         }
     }
 
+    /// Saves the whole working session as one JSON object.
     func save(_ session: TracesSession) {
         do {
             let object = Self.encodeSession(session)
@@ -42,10 +55,12 @@ actor SessionStore {
         }
     }
 
+    /// Clears the last working session. This does not clear the location cache.
     func clear() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
     }
 
+    /// Serializes a session into a JSON-compatible dictionary.
     private static func encodeSession(_ session: TracesSession) -> [String: Any] {
         [
             "events": session.events.map { encodeEvent($0) },
@@ -56,6 +71,8 @@ actor SessionStore {
         ]
     }
 
+    /// Deserializes a session dictionary. Invalid events are skipped rather than
+    /// failing the entire restore.
     private static func decodeSession(_ object: [String: Any]) -> TracesSession? {
         guard
             let eventObjects = object["events"] as? [[String: Any]],
@@ -79,6 +96,7 @@ actor SessionStore {
         )
     }
 
+    /// Serializes one final event and its review candidates.
     private static func encodeEvent(_ event: ICSEvent) -> [String: Any] {
         var object: [String: Any] = [
             "id": event.id,
@@ -108,6 +126,7 @@ actor SessionStore {
         return object
     }
 
+    /// Decodes one persisted event. Required display/export fields must exist.
     private static func decodeEvent(_ object: [String: Any]) -> ICSEvent? {
         guard
             let id = object["id"] as? String,
@@ -150,6 +169,7 @@ actor SessionStore {
         )
     }
 
+    /// Serializes one suppressed conflict candidate.
     private static func encodeSuppressedCandidate(_ candidate: SuppressedCandidate) -> [String: Any] {
         var object: [String: Any] = [
             "id": candidate.id,
@@ -180,6 +200,7 @@ actor SessionStore {
         return object
     }
 
+    /// Decodes one suppressed conflict candidate.
     private static func decodeSuppressedCandidate(_ object: [String: Any]) -> SuppressedCandidate? {
         guard
             let id = object["id"] as? String,
