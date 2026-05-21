@@ -12,11 +12,6 @@ struct ContentView: View {
     // Single source of UI state for the current window.
     @StateObject private var viewModel = TracesViewModel()
 
-    // SwiftUI fileExporter state. This replaces the previous NSSavePanel-based
-    // export path, which could crash when invoked from the toolbar button.
-    @State private var isShowingICSExporter = false
-    @State private var exportDocument = ICSExportDocument()
-
     var body: some View {
         HSplitView {
             // Left: import controls, search, and event list.
@@ -38,19 +33,6 @@ struct ContentView: View {
         .background(.background)
         .onAppear {
             viewModel.onAppear()
-        }
-        .fileExporter(
-            isPresented: $isShowingICSExporter,
-            document: exportDocument,
-            contentType: UTType(filenameExtension: "ics") ?? .data,
-            defaultFilename: "timeline-preview.ics"
-        ) { result in
-            switch result {
-            case let .success(url):
-                viewModel.status = "Exported \(viewModel.events.count) events to \(url.lastPathComponent)."
-            case let .failure(error):
-                viewModel.status = "Export failed: \(error.localizedDescription)"
-            }
         }
         // Drag-and-drop file opening. The actual file handling is delegated to
         // the view model so this view stays as layout-only as possible.
@@ -217,13 +199,12 @@ struct ContentView: View {
             Spacer(minLength: 8)
 
             Button {
-                exportDocument = ICSExportDocument(text: viewModel.currentICSText())
-                isShowingICSExporter = true
+                viewModel.exportICS()
             } label: {
                 Label("Export ICS", systemImage: "calendar.badge.plus")
                     .labelStyle(.iconOnly)
             }
-            .help("Export ICS")
+            .help("Export ICS to Downloads/Traces")
             .buttonStyle(.borderedProminent)
             .disabled(viewModel.events.isEmpty)
         }
