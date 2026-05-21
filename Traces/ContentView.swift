@@ -183,7 +183,10 @@ struct ContentView: View {
                 if let selectedEvent = viewModel.selectedEvent {
                     EventDetailView(
                         event: selectedEvent,
-                        selectedConflictCandidateID: $viewModel.selectedConflictCandidateID
+                        selectedConflictCandidateID: $viewModel.selectedConflictCandidateID,
+                        onPromoteConflictCandidate: {
+                            viewModel.promoteSelectedConflictCandidate()
+                        }
                     )
                 } else {
                     ContentUnavailableView(

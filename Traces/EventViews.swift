@@ -46,6 +46,17 @@ struct EventRow: View {
 struct EventDetailView: View {
     let event: ICSEvent
     @Binding var selectedConflictCandidateID: String?
+    let onPromoteConflictCandidate: () -> Void
+
+    private var canPromote: Bool {
+        guard let selectedConflictCandidateID else {
+            return false
+        }
+
+        return event.suppressedCandidates.contains {
+            $0.id == selectedConflictCandidateID
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -57,7 +68,8 @@ struct EventDetailView: View {
                 if !event.suppressedCandidates.isEmpty {
                     ConflictWarningView(
                         event: event,
-                        selectedConflictCandidateID: $selectedConflictCandidateID
+                        selectedConflictCandidateID: $selectedConflictCandidateID,
+                        onPromoteConflictCandidate: onPromoteConflictCandidate
                     )
                 }
 
@@ -79,6 +91,15 @@ struct EventDetailView: View {
                     }
                 }
 
+                if canPromote {
+                    Button {
+                        onPromoteConflictCandidate()
+                    } label: {
+                        Label("Use selected candidate as final event", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
                 if !event.description.isEmpty {
                     Divider()
 
@@ -98,9 +119,20 @@ struct EventDetailView: View {
 struct ConflictWarningView: View {
     let event: ICSEvent
     @Binding var selectedConflictCandidateID: String?
+    let onPromoteConflictCandidate: () -> Void
 
     private var effectiveSelectedCandidateID: String {
         selectedConflictCandidateID ?? primaryCandidateID
+    }
+
+    private var canPromote: Bool {
+        guard let selectedConflictCandidateID else {
+            return false
+        }
+
+        return event.suppressedCandidates.contains {
+            $0.id == selectedConflictCandidateID
+        }
     }
 
     var body: some View {
@@ -112,7 +144,7 @@ struct ConflictWarningView: View {
             .font(.headline)
             .foregroundStyle(.orange)
 
-            Text("点击 A/B/C 可以在地图上高亮对应地点。A 是当前保留的主地点，B/C 是同一时间段被折叠的冲突候选地点。")
+            Text("点击 A/B/C 可以在地图上高亮对应地点。A 是当前最终事件，B/C 是同一时间段被折叠的冲突候选地点。选择 B/C 后可以替换最终生成的事件。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -141,6 +173,20 @@ struct ConflictWarningView: View {
                         selectedConflictCandidateID = candidate.id
                     }
                 }
+            }
+
+            if canPromote {
+                HStack {
+                    Spacer()
+
+                    Button {
+                        onPromoteConflictCandidate()
+                    } label: {
+                        Label("Use selected as final event", systemImage: "checkmark.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(.top, 4)
             }
         }
         .padding(14)
@@ -308,6 +354,7 @@ struct EventMapView: NSViewRepresentable {
 
     func updateNSView(_ nsView: MKMapView, context: Context) {
         context.coordinator.selectedConflictCandidateID = $selectedConflictCandidateID
+        context.coordinator.isApplyingSwiftUIUpdate = true
 
         nsView.removeAnnotations(nsView.annotations)
         nsView.removeOverlays(nsView.overlays)
@@ -318,6 +365,10 @@ struct EventMapView: NSViewRepresentable {
 
             if !annotations.isEmpty {
                 nsView.showAnnotations(annotations, animated: false)
+            }
+
+            DispatchQueue.main.async {
+                context.coordinator.isApplyingSwiftUIUpdate = false
             }
 
             return
@@ -332,8 +383,6 @@ struct EventMapView: NSViewRepresentable {
         let targetCandidateID = selectedConflictCandidateID ?? primaryCandidateID
 
         if let selectedAnnotation = annotations.first(where: { $0.candidateID == targetCandidateID }) {
-            nsView.selectAnnotation(selectedAnnotation, animated: true)
-
             if selectedEvent.suppressedCandidates.isEmpty {
                 nsView.setRegion(
                     MKCoordinateRegion(
@@ -346,8 +395,23 @@ struct EventMapView: NSViewRepresentable {
             } else {
                 nsView.showAnnotations(annotations, animated: true)
             }
-        } else if !annotations.isEmpty {
-            nsView.showAnnotations(annotations, animated: true)
+
+            DispatchQueue.main.async {
+                context.coordinator.isApplyingSwiftUIUpdate = true
+                nsView.selectAnnotation(selectedAnnotation, animated: true)
+
+                DispatchQueue.main.async {
+                    context.coordinator.isApplyingSwiftUIUpdate = false
+                }
+            }
+        } else {
+            if !annotations.isEmpty {
+                nsView.showAnnotations(annotations, animated: true)
+            }
+
+            DispatchQueue.main.async {
+                context.coordinator.isApplyingSwiftUIUpdate = false
+            }
         }
     }
 
@@ -408,7 +472,7 @@ struct EventMapView: NSViewRepresentable {
         return annotations
     }
 
-    private func conflictOverlays(for event: ICSEvent) -> [ConflictPolyline] {
+    private func conflictOverlays(for event: ICSEvent) -> [MKPolyline] {
         guard let lat = event.lat, let lon = event.lon else {
             return []
         }
@@ -421,16 +485,14 @@ struct EventMapView: NSViewRepresentable {
                 return nil
             }
 
-            let points = [
+            var points = [
                 primary,
                 CLLocationCoordinate2D(latitude: candidateLat, longitude: candidateLon)
             ]
 
-            return ConflictPolyline(
-                coordinates: points,
-                candidateID: candidate.id,
-                isSelected: currentSelection == candidate.id
-            )
+            let line = MKPolyline(coordinates: &points, count: points.count)
+            line.title = currentSelection == candidate.id ? "selected" : "normal"
+            return line
         }
     }
 
@@ -452,34 +514,43 @@ struct EventMapView: NSViewRepresentable {
 
     final class Coordinator: NSObject, MKMapViewDelegate {
         var selectedConflictCandidateID: Binding<String?>
+        var isApplyingSwiftUIUpdate = false
 
         init(selectedConflictCandidateID: Binding<String?>) {
             self.selectedConflictCandidateID = selectedConflictCandidateID
         }
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
+            guard !isApplyingSwiftUIUpdate else {
+                return
+            }
+
             guard let annotation = view.annotation as? EventAnnotation else {
                 return
             }
 
-            if annotation.candidateID == primaryCandidateID {
-                selectedConflictCandidateID.wrappedValue = nil
-            } else {
-                selectedConflictCandidateID.wrappedValue = annotation.candidateID
+            DispatchQueue.main.async {
+                if annotation.candidateID == primaryCandidateID {
+                    self.selectedConflictCandidateID.wrappedValue = nil
+                } else {
+                    self.selectedConflictCandidateID.wrappedValue = annotation.candidateID
+                }
             }
         }
 
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
-            guard let overlay = overlay as? ConflictPolyline else {
+            guard let polyline = overlay as? MKPolyline else {
                 return MKOverlayRenderer(overlay: overlay)
             }
 
-            let renderer = MKPolylineRenderer(polyline: overlay)
-            renderer.strokeColor = overlay.isSelected
+            let renderer = MKPolylineRenderer(polyline: polyline)
+            let isSelected = polyline.title == "selected"
+
+            renderer.strokeColor = isSelected
                 ? NSColor.systemBlue
                 : NSColor.systemOrange.withAlphaComponent(0.65)
-            renderer.lineWidth = overlay.isSelected ? 4 : 2
-            renderer.lineDashPattern = overlay.isSelected ? nil : [6, 4]
+            renderer.lineWidth = isSelected ? 4 : 2
+            renderer.lineDashPattern = isSelected ? nil : [6, 4]
 
             return renderer
         }
@@ -521,20 +592,38 @@ final class EventAnnotation: NSObject, MKAnnotation {
     }
 }
 
-final class ConflictPolyline: MKPolyline {
+final class EventAnnotation: NSObject, MKAnnotation {
+    let eventID: String
     let candidateID: String
-    let isSelected: Bool
+    let label: String
+    let coordinate: CLLocationCoordinate2D
+
+    private let annotationTitle: String?
+    private let annotationSubtitle: String?
+
+    var title: String? {
+        label.isEmpty ? annotationTitle : "\(label) · \(annotationTitle ?? "")"
+    }
+
+    var subtitle: String? {
+        annotationSubtitle
+    }
 
     init(
-        coordinates coords: [CLLocationCoordinate2D],
+        eventID: String,
         candidateID: String,
-        isSelected: Bool
+        label: String,
+        title: String,
+        subtitle: String,
+        coordinate: CLLocationCoordinate2D
     ) {
+        self.eventID = eventID
         self.candidateID = candidateID
-        self.isSelected = isSelected
-
-        var mutableCoords = coords
-        super.init(coordinates: &mutableCoords, count: mutableCoords.count)
+        self.label = label
+        self.annotationTitle = title
+        self.annotationSubtitle = subtitle
+        self.coordinate = coordinate
+        super.init()
     }
 }
 
