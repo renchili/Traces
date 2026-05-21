@@ -1,6 +1,13 @@
 import Foundation
 
+// MARK: - Google Timeline JSON processor
+// Converts Google Timeline visit data into final ICSEvent values.
+// This file owns parsing, filtering, place resolution attachment, impossible
+// overlap collapse, local visit merging, and event construction.
+
 final class TimelineProcessor {
+    // Google Timeline timestamps can appear with or without fractional seconds.
+    // Keep both formatters so parsing does not fail on mixed exports.
     private static let isoFormatterWithFractionalSeconds: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -13,6 +20,11 @@ final class TimelineProcessor {
         return f
     }()
 
+    /// Internal normalized visit representation used before creating ICSEvent.
+    ///
+    /// A Timeline visit may later be resolved, collapsed with overlapping visits,
+    /// or merged with nearby visits. Keeping this separate from ICSEvent avoids
+    /// leaking parsing/intermediate state into exported calendar data.
     private struct Visit: Sendable {
         var start: Date
         var end: Date
@@ -25,6 +37,15 @@ final class TimelineProcessor {
         var suppressedCandidates: [SuppressedCandidate]
     }
 
+    /// Public entry point used by TracesViewModel.
+    ///
+    /// Pipeline:
+    /// 1. Parse Timeline JSON visits.
+    /// 2. Build unique place/coordinate resolve requests.
+    /// 3. Attach resolved names/URLs to visits.
+    /// 4. Collapse impossible same-time overlaps into one primary + candidates.
+    /// 5. Merge adjacent visits at the same place.
+    /// 6. Convert visits into final ICSEvent values.
     static func generateEvents(
         from jsonData: Data,
         options: TimelineOptions,
@@ -54,9 +75,18 @@ final class TimelineProcessor {
         }
     }
 
+    /// Decodes Timeline JSON and applies basic import filters.
+    ///
+    /// Filters:
+    /// - only visit entries are used
+    /// - events outside the configured last-N-days window are skipped
+    /// - short stays are skipped
+    /// - long home-like stays are skipped
     private static func parseVisits(from jsonData: Data, options: TimelineOptions) throws -> [Visit] {
         let entries = try JSONDecoder().decode([TimelineEntry].self, from: jsonData)
 
+        // Use the newest timestamp in the export as the reference point. This is
+        // safer than system time because users may import historical exports.
         let allEndDates = entries.compactMap { parseDate($0.endTime) }
         guard let maxTime = allEndDates.max() else { return [] }
 
@@ -108,6 +138,7 @@ final class TimelineProcessor {
         return visits.sorted { $0.start < $1.start }
     }
 
+    /// Deduplicates resolver requests so one place ID/coordinate is looked up once.
     private static func buildUniqueResolveRequests(from visits: [Visit]) -> [LocationResolveRequest] {
         var result: [String: LocationResolveRequest] = [:]
 
@@ -124,6 +155,9 @@ final class TimelineProcessor {
         return Array(result.values)
     }
 
+    /// Collapses impossible overlaps. A person cannot be in two far-apart places
+    /// at the same time, so the lower-quality visit becomes a suppressed
+    /// candidate attached to the winner.
     private static func collapseImpossibleOverlaps(_ visits: [Visit]) -> [Visit] {
         let sorted = visits.sorted {
             if $0.start == $1.start {
@@ -170,6 +204,7 @@ final class TimelineProcessor {
         return result
     }
 
+    /// Converts a losing overlapping visit into a user-reviewable candidate.
     private static func makeSuppressedCandidate(
         loser: Visit,
         primary: Visit
@@ -201,6 +236,7 @@ final class TimelineProcessor {
         )
     }
 
+    /// Removes duplicate suppressed candidates after repeated collapse/merge steps.
     private static func dedupeSuppressedCandidates(_ candidates: [SuppressedCandidate]) -> [SuppressedCandidate] {
         var seen: Set<String> = []
         var result: [SuppressedCandidate] = []
@@ -225,6 +261,7 @@ final class TimelineProcessor {
             && lhs.lon == rhs.lon
     }
 
+    /// Conflict heuristic: same/near-same time windows or large overlap ratio.
     private static func shouldCollapseConflict(_ lhs: Visit, _ rhs: Visit) -> Bool {
         let overlap = overlapSeconds(lhs, rhs)
         guard overlap > 0 else { return false }
@@ -254,6 +291,7 @@ final class TimelineProcessor {
         return max(0, end.timeIntervalSince(start))
     }
 
+    /// Chooses the primary visit when two visits conflict.
     private static func betterVisit(_ lhs: Visit, _ rhs: Visit) -> Visit {
         let lhsScore = visitQualityScore(lhs)
         let rhsScore = visitQualityScore(rhs)
@@ -272,6 +310,8 @@ final class TimelineProcessor {
         return lhsScore >= rhsScore ? lhs : rhs
     }
 
+    /// Scores visit quality for conflict collapse. Resolved Google names and
+    /// place IDs are preferred over generic coordinate/place fallbacks.
     private static func visitQualityScore(_ visit: Visit) -> Double {
         var score = 0.0
 
@@ -321,6 +361,7 @@ final class TimelineProcessor {
         return score
     }
 
+    /// Merges nearby consecutive visits that represent one continuous stay.
     private static func mergeVisits(_ visits: [Visit], options: TimelineOptions) -> [Visit] {
         var merged: [Visit] = []
 
@@ -377,6 +418,7 @@ final class TimelineProcessor {
         return merged
     }
 
+    /// Converts one normalized visit into the exported/displayed event model.
     private static func makeEvent(from visit: Visit) -> ICSEvent {
         let resolved = visit.resolved
         let coordText = coordinateText(visit)
@@ -434,6 +476,7 @@ final class TimelineProcessor {
             ?? isoFormatterNoFractionalSeconds.date(from: value)
     }
 
+    /// Parses Timeline geo strings like geo:1.234,103.456.
     private static func parseGeo(_ value: String?) -> (lat: Double, lon: Double)? {
         guard let value, value.hasPrefix("geo:") else { return nil }
 
@@ -453,6 +496,7 @@ final class TimelineProcessor {
         semantic.lowercased().contains("home")
     }
 
+    /// Chooses display title from resolved name, coordinate fallback, semantic, or generic fallback.
     private static func title(for visit: Visit) -> String {
         if let title = visit.resolved?.title.trimmingCharacters(in: .whitespacesAndNewlines),
            !title.isEmpty {
@@ -477,6 +521,7 @@ final class TimelineProcessor {
         return String(format: "%.6f,%.6f", lat, lon)
     }
 
+    /// Creates a Google Maps URL from place ID first, coordinates second.
     private static func mapsURL(_ visit: Visit) -> String {
         if !visit.placeID.isEmpty {
             return "https://www.google.com/maps/place/?q=place_id:\(visit.placeID)"
@@ -491,6 +536,7 @@ final class TimelineProcessor {
         )
     }
 
+    /// Stable event ID used by ICS export and incremental UI updates.
     private static func stableUID(visit: Visit, title: String) -> String {
         let mergeKey = visit.resolved?.mergeKey ?? visit.placeID
         let raw = "\(visit.start.timeIntervalSince1970)|\(visit.end.timeIntervalSince1970)|\(title)|\(mergeKey)"
@@ -519,6 +565,7 @@ final class TimelineProcessor {
         )
     }
 
+    /// Haversine distance used for conflict/merge distance checks.
     private static func distanceMeters(
         lat1: Double,
         lon1: Double,
