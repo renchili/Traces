@@ -1,82 +1,142 @@
 # CHANGE.md
 
-## Unreleased
+All notable changes to Traces are documented here.
+
+This file follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/): entries are grouped by version/date and by change type.
+
+## [Unreleased]
+
+### Planned
+
+- Move Google API key storage from `UserDefaults` to Keychain or a backend resolver before any production distribution.
+- Add unit tests for Timeline JSON parsing, event upsert keys, conflict promotion, and ICS export.
+- Add sample Timeline JSON fixtures with redacted coordinates/place IDs.
+- Add a user-visible location-resolution status panel for cache hits, API hits, and fallbacks.
+
+## [0.4.0] - 2026-05-21
 
 ### Added
 
-- Added a three-pane macOS layout:
-  - left panel for event list and search
-  - center panel split into map preview and event details
-  - right panel for timeline waterfall visualization
-- Added Timeline JSON incremental import behavior.
-  - Importing a new Timeline JSON no longer clears existing events.
-  - Existing events are updated by upsert key.
-  - New events are appended.
-  - Missing historical events are preserved.
-- Added `TracesViewModel` to move UI state and user actions out of `ContentView`.
-- Added `EventUpsertService` for event merge / upsert logic.
-- Added persistent session restore.
-  - Restores last events
-  - Restores selected event
-  - Restores generated ICS content
-  - Restores last file name
-- Added location conflict detection for impossible overlapping location candidates.
-  - Same-time or highly overlapping visits are collapsed into one primary event.
-  - Suppressed candidates are retained for debugging.
-  - Candidate distance from the primary event is calculated when coordinates are available.
-- Added conflict candidate display in event details.
-  - Shows A/B/C candidates.
-  - Highlights the selected candidate.
-  - Shows distance between primary and suppressed candidates.
-- Added map display for selected event conflicts.
-  - Shows primary location and suppressed candidates.
-  - Draws conflict distance lines.
-  - Supports selecting conflict candidates from the detail panel and map.
-- Added latitude / longitude support to `ICSEvent`.
-- Added suppressed candidate model data to `ICSEvent`.
-- Added GEO export support in generated ICS files.
-- Added local persistent caching for resolved Google place IDs.
-- Added cache-aware Google location resolver flow.
-  - Memory cache
-  - UserDefaults-backed local cache
-  - Google Places API New
-  - Google Places API Legacy
-  - Geocoding by place ID
-  - Reverse geocoding by coordinates
-  - Coordinate / place ID fallback
+- Added documentation for the current codebase:
+  - `docs/ARCHITECTURE.md` explains the app architecture, data flow, and file ownership.
+  - `docs/FEATURES.md` explains supported user-facing features and expected behavior.
+  - `docs/CODE_MAP.md` maps each Swift file to the feature/view it controls.
+- Split the previously oversized `EventViews.swift` into focused files:
+  - `EventViews.swift` now only contains `EventRow` and shared event date formatting.
+  - `ConflictCandidatesView.swift` contains event details and A/B/C conflict candidate UI.
+  - `EventMapView.swift` contains the MapKit bridge, map annotations, and conflict lines.
+  - `TimelineWaterfallView.swift` contains the right-side timeline waterfall and event-block layout.
+- Added `TracesMapAnnotation` as the single map annotation type to avoid duplicate `EventAnnotation` declarations.
 
 ### Changed
 
-- Refactored `ContentView` to focus on rendering and bindings only.
-- Moved import, export, session, cache, and merge actions into `TracesViewModel`.
-- Moved incremental merge and upsert key logic into `EventUpsertService`.
-- Changed Timeline JSON import from full replacement to incremental merge.
-- Changed timeline waterfall rendering to support overlapping event columns.
-- Changed timeline waterfall layout to recalculate on split-view width changes.
-- Changed selected event map behavior to focus on selected event candidates.
+- Refactored view code so each file has one main responsibility.
+- Reduced ambiguous type lookup risk by removing duplicate map annotation definitions.
+- Kept `ContentView` as the top-level three-pane layout shell instead of a business-logic container.
+
+### Fixed
+
+- Fixed `EventAnnotation is ambiguous for type lookup` caused by duplicate class declarations.
+- Fixed invalid redeclaration of `EventAnnotation`.
+- Reduced future risk of MapKit delegate/view code being mixed with timeline and event detail rendering.
+
+## [0.3.0] - 2026-05-21
+
+### Added
+
+- Added conflict candidate selection and final-event replacement.
+- Added `promoteSelectedConflictCandidate()` in `TracesViewModel`.
+- Added support for replacing the final generated event location with a selected suppressed candidate.
+- Added manual replacement notes into the event description after a candidate is promoted.
+- Added logic to keep the old primary event as a suppressed candidate after promotion, allowing users to switch back.
+
+### Changed
+
+- Selecting A/B/C now previews candidates, while using the explicit “Use selected as final event” action changes the final event.
+- Regenerates ICS after conflict-candidate promotion so export reflects the chosen final event.
+
+### Fixed
+
+- Fixed accidental local constant assignment in `promoteSelectedConflictCandidate()`.
+- Fixed confusing behavior where selecting a candidate looked like it might change the final event but did not.
+
+## [0.2.0] - 2026-05-21
+
+### Added
+
+- Added location conflict detection for impossible overlapping location candidates.
+- Added suppressed candidate storage on `ICSEvent`.
+- Added A/B/C conflict candidate UI with selected-state highlighting.
+- Added candidate distance display when both locations have coordinates.
+- Added map display for selected events and conflict candidates.
+- Added map lines between the primary event location and suppressed candidates.
+- Added latitude/longitude support to `ICSEvent`.
+- Added `GEO` export support in generated ICS files.
+- Added persistent session restore.
+- Added local persistent caching for resolved Google place IDs.
+- Added cache-aware Google resolver flow:
+  - memory cache
+  - local `UserDefaults` cache
+  - Google Places API New
+  - Google Places API Legacy
+  - Geocoding by place ID
+  - reverse geocoding by coordinates
+  - coordinate/place ID fallback
+
+### Changed
+
 - Changed conflict details from plain description text to structured UI.
+- Changed selected event map behavior to focus on selected event candidates.
 - Changed session storage schema to include suppressed conflict candidates.
-- Changed `ICSEvent` equality to include all visible and exported event fields.
-- Changed model initializers to be `nonisolated` to satisfy Swift 6 concurrency checks.
+- Changed model initializers to `nonisolated` to satisfy Swift 6 concurrency checks.
 - Changed macOS MapKit delegate selection handling to use the macOS `didSelect view` signature.
 
 ### Fixed
 
-- Fixed duplicated / impossible same-time events such as one user appearing at two different places at the same time.
+- Fixed duplicated or impossible same-time events such as one user appearing in two different places at the same time.
+- Fixed `Publishing changes from within view updates is not allowed` by avoiding binding writes during MapKit-driven SwiftUI view updates.
+- Fixed macOS MapKit delegate error: `Cannot override 'mapView' which has been marked unavailable`.
+- Fixed `MKPolyline` coordinate initialization for macOS.
+- Fixed missing `suppressedCandidates` initializer argument after extending `ICSEvent`.
+- Fixed Swift 6 actor-isolation warnings in session decoding/encoding paths.
+
+## [0.1.0] - 2026-05-21
+
+### Added
+
+- Added initial standalone macOS SwiftUI app structure.
+- Added three-pane layout:
+  - left panel for event list, import/export actions, search, and status
+  - center panel with map preview and event details
+  - right panel with timeline waterfall visualization
+- Added ICS preview support.
+- Added Timeline JSON import support.
+- Added Timeline JSON to ICS generation.
+- Added `TracesViewModel` to move state and app actions out of `ContentView`.
+- Added `EventUpsertService` for event merge/upsert logic.
+- Added incremental Timeline JSON import behavior:
+  - importing a new Timeline JSON no longer clears existing events
+  - existing events are updated by upsert key
+  - new events are appended
+  - missing historical events are preserved
+
+### Changed
+
+- Changed Timeline JSON import from full replacement to incremental merge.
+- Changed timeline waterfall rendering to support overlapping event columns.
+- Changed timeline waterfall layout to recalculate on split-view width changes.
+- Changed `ICSEvent` equality to include all visible/exported event fields.
+
+### Fixed
+
+- Fixed event loss when importing a partial Timeline JSON file.
 - Fixed overlapping event blocks in the timeline waterfall.
 - Fixed timeline waterfall not refreshing correctly after split-view drag resizing.
 - Fixed event text compression in narrow timeline columns.
-- Fixed Swift 6 actor-isolation warnings in session decoding / encoding paths.
-- Fixed missing `suppressedCandidates` initializer argument after extending `ICSEvent`.
-- Fixed macOS MapKit delegate method error:
-  - `Cannot override 'mapView' which has been marked unavailable`
-- Fixed `MKPolyline` coordinate initialization for macOS.
-- Fixed session restore after adding latitude / longitude and conflict candidate data.
 - Fixed UI layout where side panels did not align to the top in the split view.
 - Fixed app state being lost after restart by adding session persistence.
 
-### Notes
+## Notes
 
-- Existing old sessions may not contain new conflict candidate fields. Clearing the last session and re-importing Timeline JSON is recommended after this change.
-- Google API keys are still stored through app settings / UserDefaults in the development build. A production release should move API keys to Keychain or a backend resolver.
-- Timeline JSON import is now additive. Use “Clear Last Session” only when intentionally resetting the working event set.
+- Existing old sessions may not contain newer conflict candidate fields. Clearing the last session and re-importing Timeline JSON is recommended after schema-changing updates.
+- Timeline JSON import is additive by default. Use “Clear Last Session” only when intentionally resetting the working event set.
