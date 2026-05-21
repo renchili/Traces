@@ -11,6 +11,7 @@ import MapKit
 /// Controlled view area:
 /// - map title
 /// - selected coordinate/candidate count summary
+/// - explicit “show all events” action
 /// - embedded `EventMapView`
 struct EventMapPanel: View {
     let events: [ICSEvent]
@@ -21,9 +22,13 @@ struct EventMapPanel: View {
         events.first { $0.id == selectedEventID }
     }
 
+    private var eventCountWithCoordinates: Int {
+        events.filter { $0.lat != nil && $0.lon != nil }.count
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: 10) {
                 Text("Map")
                     .font(.headline)
 
@@ -38,10 +43,21 @@ struct EventMapPanel: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("No coordinate")
+                    Text("All events · \(eventCountWithCoordinates) with coordinates")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Button {
+                    selectedEventID = nil
+                    selectedConflictCandidateID = nil
+                } label: {
+                    Label("Show All", systemImage: "map")
+                        .labelStyle(.titleAndIcon)
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
+                .disabled(selectedEventID == nil)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -50,7 +66,7 @@ struct EventMapPanel: View {
 
             EventMapView(
                 events: events,
-                selectedEventID: selectedEventID,
+                selectedEventID: $selectedEventID,
                 selectedConflictCandidateID: $selectedConflictCandidateID
             )
         }
@@ -64,14 +80,17 @@ struct EventMapPanel: View {
 /// - render all event coordinates when no event is selected
 /// - render only A/B/C candidates when one event is selected
 /// - draw polylines from A to suppressed candidates
-/// - update selected conflict candidate when the user clicks a map marker
+/// - update selected event/candidate when the user clicks a map marker
 struct EventMapView: NSViewRepresentable {
     let events: [ICSEvent]
-    let selectedEventID: String?
+    @Binding var selectedEventID: String?
     @Binding var selectedConflictCandidateID: String?
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(selectedConflictCandidateID: $selectedConflictCandidateID)
+        Coordinator(
+            selectedEventID: $selectedEventID,
+            selectedConflictCandidateID: $selectedConflictCandidateID
+        )
     }
 
     func makeNSView(context: Context) -> MKMapView {
@@ -83,8 +102,9 @@ struct EventMapView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MKMapView, context: Context) {
-        // Keep the coordinator bound to the latest SwiftUI binding. This matters
+        // Keep the coordinator bound to the latest SwiftUI bindings. This matters
         // because SwiftUI may recreate bindings while reusing the NSView.
+        context.coordinator.selectedEventID = $selectedEventID
         context.coordinator.selectedConflictCandidateID = $selectedConflictCandidateID
 
         // Programmatic annotation selection during updateNSView triggers MapKit
@@ -258,10 +278,15 @@ struct EventMapView: NSViewRepresentable {
 
     /// MapKit delegate object. Handles user-driven marker selection and polyline styling.
     final class Coordinator: NSObject, MKMapViewDelegate {
+        var selectedEventID: Binding<String?>
         var selectedConflictCandidateID: Binding<String?>
         var isApplyingSwiftUIUpdate = false
 
-        init(selectedConflictCandidateID: Binding<String?>) {
+        init(
+            selectedEventID: Binding<String?>,
+            selectedConflictCandidateID: Binding<String?>
+        ) {
+            self.selectedEventID = selectedEventID
             self.selectedConflictCandidateID = selectedConflictCandidateID
         }
 
@@ -276,6 +301,12 @@ struct EventMapView: NSViewRepresentable {
 
             // User clicks are safe to bridge back to SwiftUI asynchronously.
             DispatchQueue.main.async {
+                if self.selectedEventID.wrappedValue == nil {
+                    self.selectedEventID.wrappedValue = annotation.eventID
+                    self.selectedConflictCandidateID.wrappedValue = nil
+                    return
+                }
+
                 if annotation.candidateID == primaryCandidateID {
                     self.selectedConflictCandidateID.wrappedValue = nil
                 } else {
