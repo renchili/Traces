@@ -1,12 +1,20 @@
 import SwiftUI
 import Foundation
 
+// MARK: - Shared event list views
+// Owns only the reusable event row and shared date range formatter.
+// Map, timeline, and conflict-detail rendering live in separate files.
+
+/// One event row in the left event list.
+/// Shows title, conflict count, time range, and optional location preview.
 struct EventRow: View {
     let event: ICSEvent
     let compact: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
+            // Title row. The orange badge shows how many alternate conflict
+            // candidates are attached to this final event.
             HStack(spacing: 6) {
                 Text(event.summary)
                     .font(.headline)
@@ -23,11 +31,13 @@ struct EventRow: View {
                 }
             }
 
+            // Shared display time string.
             Text(dateRange(event))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
 
+            // Location preview is omitted in compact mode.
             if !compact && !event.location.isEmpty {
                 Text(event.location)
                     .font(.caption)
@@ -40,6 +50,7 @@ struct EventRow: View {
     }
 }
 
+/// Formats event dates for display in SwiftUI views.
 func dateRange(_ event: ICSEvent) -> String {
     let formatter = DateFormatter()
     formatter.dateStyle = .medium
