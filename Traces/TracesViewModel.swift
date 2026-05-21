@@ -446,24 +446,17 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Exports the current final event list as an ICS file.
-    func exportICS() {
-        let icsText = generatedICS.isEmpty
+    // Returns the current final event list as ICS text for SwiftUI fileExporter.
+    func currentICSText() -> String {
+        generatedICS.isEmpty
             ? ICSWriter.makeICS(events: events)
             : generatedICS
+    }
 
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "ics") ?? .data]
-        panel.nameFieldStringValue = "timeline-preview.ics"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try icsText.write(to: url, atomically: true, encoding: .utf8)
-                status = "Exported \(events.count) events to \(url.lastPathComponent)."
-            } catch {
-                status = "Export failed: \(error.localizedDescription)"
-            }
-        }
+    // Deprecated AppKit export path kept as a wrapper for non-UI callers.
+    // ContentView now uses SwiftUI fileExporter to avoid NSSavePanel crashes.
+    func exportICS() {
+        generatedICS = currentICSText()
     }
 
     // MARK: Session/cache actions
