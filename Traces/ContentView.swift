@@ -9,22 +9,20 @@ import Foundation
 // in dedicated child view files.
 
 struct ContentView: View {
-    // Single source of UI state for the current window.
     @StateObject private var viewModel = TracesViewModel()
+    @State private var isShowingICSExporter = false
+    @State private var exportDocument = ICSExportDocument()
 
     var body: some View {
         HSplitView {
-            // Left: import controls, search, and event list.
             leftEventList
                 .frame(minWidth: 240, idealWidth: 340, maxWidth: 480)
                 .frame(maxHeight: .infinity, alignment: .top)
 
-            // Center: map on top, selected event detail below.
             middleMapAndDetail
                 .frame(minWidth: 460, idealWidth: 760)
                 .frame(maxHeight: .infinity, alignment: .top)
 
-            // Right: time-based waterfall overview.
             rightTimelineWaterfall
                 .frame(minWidth: 240, idealWidth: 320, maxWidth: 460)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -34,8 +32,19 @@ struct ContentView: View {
         .onAppear {
             viewModel.onAppear()
         }
-        // Drag-and-drop file opening. The actual file handling is delegated to
-        // the view model so this view stays as layout-only as possible.
+        .fileExporter(
+            isPresented: $isShowingICSExporter,
+            document: exportDocument,
+            contentType: UTType(filenameExtension: "ics") ?? .data,
+            defaultFilename: "timeline-preview.ics"
+        ) { result in
+            switch result {
+            case let .success(url):
+                viewModel.status = "Exported \(viewModel.events.count) events to \(url.lastPathComponent)."
+            case let .failure(error):
+                viewModel.status = "Export failed: \(error.localizedDescription)"
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             guard let provider = providers.first else { return false }
 
@@ -55,8 +64,6 @@ struct ContentView: View {
             return true
         }
     }
-
-    // MARK: - Left event list column
 
     private var leftEventList: some View {
         VStack(spacing: 0) {
@@ -84,10 +91,6 @@ struct ContentView: View {
                     .padding(.bottom, 6)
             }
 
-            // Custom list instead of SwiftUI List selection because macOS List
-            // does not toggle nil when clicking an already-selected row.
-            // Required behavior: click event once to select, click the same event
-            // again to clear selection and return the map to all-events mode.
             ScrollView {
                 LazyVStack(spacing: 2) {
                     ForEach(viewModel.filteredEvents) { event in
@@ -141,8 +144,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.background)
     }
-
-    // MARK: - Toolbar
 
     private var toolbar: some View {
         HStack(spacing: 8) {
@@ -199,18 +200,17 @@ struct ContentView: View {
             Spacer(minLength: 8)
 
             Button {
-                viewModel.exportICS()
+                exportDocument = ICSExportDocument(text: viewModel.currentICSText())
+                isShowingICSExporter = true
             } label: {
                 Label("Export ICS", systemImage: "calendar.badge.plus")
                     .labelStyle(.iconOnly)
             }
-            .help("Export ICS to Downloads/Traces")
+            .help("Export ICS")
             .buttonStyle(.borderedProminent)
             .disabled(viewModel.events.isEmpty)
         }
     }
-
-    // MARK: - Center map and event detail column
 
     private var middleMapAndDetail: some View {
         VSplitView {
@@ -246,8 +246,6 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.background)
     }
-
-    // MARK: - Right timeline waterfall column
 
     private var rightTimelineWaterfall: some View {
         TimelineWaterfallView(
