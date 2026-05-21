@@ -3,19 +3,28 @@ import AppKit
 import UniformTypeIdentifiers
 import Foundation
 
+// MARK: - Top-level app shell
+// ContentView owns only the window layout and high-level bindings.
+// Business logic lives in TracesViewModel; map/timeline/detail rendering lives
+// in dedicated child view files.
+
 struct ContentView: View {
+    // Single source of UI state for the current window.
     @StateObject private var viewModel = TracesViewModel()
 
     var body: some View {
         HSplitView {
+            // Left: import controls, search, and event list.
             leftEventList
                 .frame(minWidth: 240, idealWidth: 340, maxWidth: 480)
                 .frame(maxHeight: .infinity, alignment: .top)
 
+            // Center: map on top, selected event detail below.
             middleMapAndDetail
                 .frame(minWidth: 460, idealWidth: 760)
                 .frame(maxHeight: .infinity, alignment: .top)
 
+            // Right: time-based waterfall overview.
             rightTimelineWaterfall
                 .frame(minWidth: 240, idealWidth: 320, maxWidth: 460)
                 .frame(maxHeight: .infinity, alignment: .top)
@@ -25,6 +34,8 @@ struct ContentView: View {
         .onAppear {
             viewModel.onAppear()
         }
+        // Drag-and-drop file opening. The actual file handling is delegated to
+        // the view model so this view stays as layout-only as possible.
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             guard let provider = providers.first else { return false }
 
@@ -44,6 +55,8 @@ struct ContentView: View {
             return true
         }
     }
+
+    // MARK: - Left event list column
 
     private var leftEventList: some View {
         VStack(spacing: 0) {
@@ -71,6 +84,7 @@ struct ContentView: View {
                     .padding(.bottom, 6)
             }
 
+            // Event selection drives all other panels: map, detail, and timeline.
             List(viewModel.filteredEvents, selection: $viewModel.selectedEventID) { event in
                 EventRow(event: event, compact: false)
                     .tag(event.id)
@@ -103,6 +117,8 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.background)
     }
+
+    // MARK: - Toolbar
 
     private var toolbar: some View {
         HStack(spacing: 8) {
@@ -169,6 +185,8 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Center map and event detail column
+
     private var middleMapAndDetail: some View {
         VSplitView {
             EventMapPanel(
@@ -203,6 +221,8 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(.background)
     }
+
+    // MARK: - Right timeline waterfall column
 
     private var rightTimelineWaterfall: some View {
         TimelineWaterfallView(
