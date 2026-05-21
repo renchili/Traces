@@ -8,13 +8,101 @@ struct ICSEvent: Identifiable, Hashable, Codable, Sendable {
     let url: String
     let start: Date?
     let end: Date?
+    let lat: Double?
+    let lon: Double?
+    let suppressedCandidates: [SuppressedCandidate]
+
+    nonisolated init(
+        id: String,
+        summary: String,
+        location: String,
+        description: String,
+        url: String,
+        start: Date?,
+        end: Date?,
+        lat: Double?,
+        lon: Double?,
+        suppressedCandidates: [SuppressedCandidate] = []
+    ) {
+        self.id = id
+        self.summary = summary
+        self.location = location
+        self.description = description
+        self.url = url
+        self.start = start
+        self.end = end
+        self.lat = lat
+        self.lon = lon
+        self.suppressedCandidates = suppressedCandidates
+    }
 
     static func == (lhs: ICSEvent, rhs: ICSEvent) -> Bool {
         lhs.id == rhs.id
+            && lhs.summary == rhs.summary
+            && lhs.location == rhs.location
+            && lhs.description == rhs.description
+            && lhs.url == rhs.url
+            && lhs.start == rhs.start
+            && lhs.end == rhs.end
+            && lhs.lat == rhs.lat
+            && lhs.lon == rhs.lon
+            && lhs.suppressedCandidates == rhs.suppressedCandidates
     }
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
+    }
+}
+
+struct SuppressedCandidate: Hashable, Codable, Sendable, Identifiable {
+    let id: String
+    let title: String
+    let placeID: String
+    let lat: Double?
+    let lon: Double?
+    let start: Date?
+    let end: Date?
+    let distanceMetersFromPrimary: Double?
+
+    nonisolated init(
+        id: String,
+        title: String,
+        placeID: String,
+        lat: Double?,
+        lon: Double?,
+        start: Date?,
+        end: Date?,
+        distanceMetersFromPrimary: Double?
+    ) {
+        self.id = id
+        self.title = title
+        self.placeID = placeID
+        self.lat = lat
+        self.lon = lon
+        self.start = start
+        self.end = end
+        self.distanceMetersFromPrimary = distanceMetersFromPrimary
+    }
+
+    nonisolated static func make(
+        title: String,
+        placeID: String,
+        lat: Double?,
+        lon: Double?,
+        start: Date?,
+        end: Date?,
+        distanceMetersFromPrimary: Double?
+    ) -> SuppressedCandidate {
+        SuppressedCandidate(
+            id: UUID().uuidString,
+            title: title,
+            placeID: placeID,
+            lat: lat,
+            lon: lon,
+            start: start,
+            end: end,
+            distanceMetersFromPrimary: distanceMetersFromPrimary
+        )
     }
 }
 

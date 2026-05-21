@@ -1,10 +1,3 @@
-//
-//  ICSCodec.swift
-//  Traces
-//
-//  Created by Renchi Li on 20/5/26.
-//
-
 import Foundation
 
 final class ICSWriter {
@@ -44,6 +37,10 @@ final class ICSWriter {
 
             if !event.url.isEmpty {
                 lines.append("URL:\(event.url)")
+            }
+
+            if let lat = event.lat, let lon = event.lon {
+                lines.append("GEO:\(String(format: "%.6f", lat));\(String(format: "%.6f", lon))")
             }
 
             lines.append("END:VEVENT")
@@ -113,6 +110,8 @@ final class ICSParser {
 
             if line == "END:VEVENT" {
                 if let current {
+                    let geo = parseGEO(current["GEO"])
+
                     events.append(
                         ICSEvent(
                             id: current["UID"] ?? uid,
@@ -121,7 +120,10 @@ final class ICSParser {
                             description: unescape(current["DESCRIPTION"] ?? ""),
                             url: current["URL"] ?? "",
                             start: parseICSDate(current["DTSTART"]),
-                            end: parseICSDate(current["DTEND"])
+                            end: parseICSDate(current["DTEND"]),
+                            lat: geo?.lat,
+                            lon: geo?.lon,
+                            suppressedCandidates: []
                         )
                     )
                 }
@@ -198,5 +200,20 @@ final class ICSParser {
         }
 
         return nil
+    }
+
+    private static func parseGEO(_ value: String?) -> (lat: Double, lon: Double)? {
+        guard let value else { return nil }
+
+        let parts = value.split(separator: ";")
+        guard
+            parts.count == 2,
+            let lat = Double(parts[0]),
+            let lon = Double(parts[1])
+        else {
+            return nil
+        }
+
+        return (lat, lon)
     }
 }

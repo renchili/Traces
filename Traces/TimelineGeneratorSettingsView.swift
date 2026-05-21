@@ -1,10 +1,3 @@
-//
-//  TimelineGeneratorSettingsView.swift
-//  Traces
-//
-//  Created by Renchi Li on 20/5/26.
-//
-
 import SwiftUI
 
 struct TimelineGeneratorSettingsView: View {

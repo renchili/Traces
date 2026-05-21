@@ -4,97 +4,26 @@ import UniformTypeIdentifiers
 import Foundation
 
 struct ContentView: View {
-    @State private var events: [ICSEvent] = []
-    @State private var selectedEventID: String?
-    @State private var fileName: String = "Open .ics or Timeline JSON"
-    @State private var query: String = ""
-    @State private var status: String = ""
-    @State private var generatedICS: String = ""
-    @State private var isGenerating = false
-    @State private var showingGeneratorSettings = false
-    @State private var cacheCount: Int = 0
-
-    @AppStorage("traces.googleAPIKey") private var googleAPIKey: String = ""
-    @AppStorage("traces.lastDays") private var lastDays: Int = 14
-    @AppStorage("traces.minStayMinutes") private var minStayMinutes: Double = 15
-    @AppStorage("traces.removeHomeOverMinutes") private var removeHomeOverMinutes: Double = 60
-
-    private var selectedEvent: ICSEvent? {
-        events.first { $0.id == selectedEventID }
-    }
-
-    private var filteredEvents: [ICSEvent] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return events }
-
-        return events.filter {
-            $0.summary.lowercased().contains(q)
-            || $0.location.lowercased().contains(q)
-            || $0.description.lowercased().contains(q)
-        }
-    }
+    @StateObject private var viewModel = TracesViewModel()
 
     var body: some View {
-        NavigationSplitView {
-            GeometryReader { proxy in
-                let compact = proxy.size.width < 240
-                let ultraCompact = proxy.size.width < 150
+        HSplitView {
+            leftEventList
+                .frame(minWidth: 240, idealWidth: 340, maxWidth: 480)
+                .frame(maxHeight: .infinity, alignment: .top)
 
-                VStack(spacing: 0) {
-                    toolbar(compact: compact, ultraCompact: ultraCompact)
-                        .padding(.horizontal, compact ? 8 : 12)
-                        .padding(.vertical, 10)
+            middleMapAndDetail
+                .frame(minWidth: 460, idealWidth: 760)
+                .frame(maxHeight: .infinity, alignment: .top)
 
-                    if !ultraCompact {
-                        TextField("Search title / location / description", text: $query)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(minWidth: 90)
-                            .padding(.horizontal, compact ? 8 : 12)
-                            .padding(.bottom, 8)
-                    }
-
-                    if isGenerating {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(.bottom, 6)
-                    }
-
-                    if !status.isEmpty && !compact {
-                        Text(status)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                            .padding(.horizontal, 12)
-                            .padding(.bottom, 6)
-                    }
-
-                    List(filteredEvents, selection: $selectedEventID) { event in
-                        EventRow(event: event, compact: compact)
-                            .tag(event.id)
-                            .contentShape(Rectangle())
-                    }
-                    .onChange(of: selectedEventID) {
-                        saveCurrentSession()
-                    }
-                }
-            }
-            .navigationTitle("Traces")
-            .navigationSplitViewColumnWidth(min: 120, ideal: 340, max: 560)
-        } detail: {
-            if let event = selectedEvent {
-                EventDetailView(event: event)
-            } else {
-                ContentUnavailableView(
-                    "No event selected",
-                    systemImage: "doc.text.magnifyingglass",
-                    description: Text("Open an .ics file, or generate events from Google Timeline JSON.")
-                )
-            }
+            rightTimelineWaterfall
+                .frame(minWidth: 240, idealWidth: 320, maxWidth: 460)
+                .frame(maxHeight: .infinity, alignment: .top)
         }
-        .frame(minWidth: 860, minHeight: 620)
+        .frame(minWidth: 1100, minHeight: 680)
+        .background(.background)
         .onAppear {
-            restoreLastSession()
-            refreshCacheCount()
+            viewModel.onAppear()
         }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             guard let provider = providers.first else { return false }
@@ -108,7 +37,7 @@ struct ContentView: View {
                 }
 
                 DispatchQueue.main.async {
-                    loadFile(url)
+                    viewModel.loadFile(url)
                 }
             }
 
@@ -116,273 +45,168 @@ struct ContentView: View {
         }
     }
 
-    @ViewBuilder
-    private func toolbar(compact: Bool, ultraCompact: Bool) -> some View {
-        HStack(spacing: compact ? 6 : 10) {
+    private var leftEventList: some View {
+        VStack(spacing: 0) {
+            toolbar
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+
+            TextField("Search events", text: $viewModel.query)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+
+            if viewModel.isGenerating {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.bottom, 6)
+            }
+
+            if !viewModel.status.isEmpty {
+                Text(viewModel.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+            }
+
+            List(viewModel.filteredEvents, selection: $viewModel.selectedEventID) { event in
+                EventRow(event: event, compact: false)
+                    .tag(event.id)
+                    .contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onChange(of: viewModel.selectedEventID) {
+                viewModel.didSelectEventChanged()
+            }
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Text("\(viewModel.filteredEvents.count) events")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: true, vertical: false)
+
+                Spacer(minLength: 8)
+
+                Text(viewModel.fileName)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(.background)
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 8) {
             Menu {
                 Button("Open ICS Preview") {
-                    openFile(allowedExtensions: ["ics"])
+                    viewModel.openFile(allowedExtensions: ["ics"])
                 }
 
-                Button("Open Timeline JSON & Generate") {
-                    openFile(allowedExtensions: ["json"])
+                Button("Import Timeline JSON") {
+                    viewModel.openFile(allowedExtensions: ["json"])
                 }
 
                 Divider()
 
                 Button("Clear Last Session") {
-                    clearLastSession()
+                    viewModel.clearLastSession()
                 }
-                .disabled(events.isEmpty && generatedICS.isEmpty)
+                .disabled(viewModel.events.isEmpty && viewModel.generatedICS.isEmpty)
             } label: {
-                if compact {
-                    Label("Open", systemImage: "folder")
-                        .labelStyle(.iconOnly)
-                } else {
-                    Label("Open", systemImage: "folder")
-                        .labelStyle(.titleAndIcon)
-                }
+                Label("Open", systemImage: "folder")
             }
             .buttonStyle(.bordered)
-            .help("Open ICS or Timeline JSON")
 
             Button {
-                showingGeneratorSettings.toggle()
+                viewModel.showingGeneratorSettings.toggle()
             } label: {
-                Label("Generate Settings", systemImage: "slider.horizontal.3")
+                Label("Settings", systemImage: "slider.horizontal.3")
                     .labelStyle(.iconOnly)
             }
             .buttonStyle(.bordered)
-            .popover(isPresented: $showingGeneratorSettings, arrowEdge: .bottom) {
+            .popover(isPresented: $viewModel.showingGeneratorSettings, arrowEdge: .bottom) {
                 TimelineGeneratorSettingsView(
-                    googleAPIKey: $googleAPIKey,
-                    lastDays: $lastDays,
-                    minStayMinutes: $minStayMinutes,
-                    removeHomeOverMinutes: $removeHomeOverMinutes,
-                    cacheCount: cacheCount,
-                    onClearCache: clearLocationCache
+                    googleAPIKey: Binding(
+                        get: { viewModel.googleAPIKey },
+                        set: { viewModel.googleAPIKey = $0 }
+                    ),
+                    lastDays: Binding(
+                        get: { viewModel.lastDays },
+                        set: { viewModel.lastDays = $0 }
+                    ),
+                    minStayMinutes: Binding(
+                        get: { viewModel.minStayMinutes },
+                        set: { viewModel.minStayMinutes = $0 }
+                    ),
+                    removeHomeOverMinutes: Binding(
+                        get: { viewModel.removeHomeOverMinutes },
+                        set: { viewModel.removeHomeOverMinutes = $0 }
+                    ),
+                    cacheCount: viewModel.cacheCount,
+                    onClearCache: viewModel.clearLocationCache
                 )
             }
-            .help("Timeline generation settings")
 
-            if !compact {
-                Text(fileName)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-
-            Spacer(minLength: 0)
+            Spacer(minLength: 8)
 
             Button {
-                exportICS()
+                viewModel.exportICS()
             } label: {
-                if compact {
-                    Label("Export ICS", systemImage: "square.and.arrow.down")
-                        .labelStyle(.iconOnly)
-                } else {
-                    Label("Export ICS", systemImage: "square.and.arrow.down")
-                        .labelStyle(.titleAndIcon)
-                }
+                Label("Export", systemImage: "square.and.arrow.down")
+                    .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(events.isEmpty)
+            .disabled(viewModel.events.isEmpty)
+        }
+    }
 
-            if !compact {
-                Text("\(filteredEvents.count) events")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            } else if !ultraCompact {
-                Text("\(filteredEvents.count)")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                    .fixedSize()
+    private var middleMapAndDetail: some View {
+        VSplitView {
+            EventMapPanel(
+                events: viewModel.filteredEvents,
+                selectedEventID: $viewModel.selectedEventID,
+                selectedConflictCandidateID: $viewModel.selectedConflictCandidateID
+            )
+            .frame(minHeight: 260, idealHeight: 380)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+
+            Group {
+                if let selectedEvent = viewModel.selectedEvent {
+                    EventDetailView(
+                        event: selectedEvent,
+                        selectedConflictCandidateID: $viewModel.selectedConflictCandidateID
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "No event selected",
+                        systemImage: "doc.text.magnifyingglass",
+                        description: Text("Select an event from the left list.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
+            .frame(minHeight: 260)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(.background)
     }
 
-    private func openFile(allowedExtensions: [String]) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = allowedExtensions.compactMap {
-            UTType(filenameExtension: $0)
-        }
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-            loadFile(url)
-        }
-    }
-
-    private func loadFile(_ url: URL) {
-        do {
-            let data = try Data(contentsOf: url)
-            let ext = url.pathExtension.lowercased()
-
-            if ext == "json" {
-                loadTimelineJSON(data: data, fileName: url.lastPathComponent)
-            } else {
-                let text = try String(contentsOf: url, encoding: .utf8)
-                let parsed = ICSParser.parse(text)
-
-                self.events = parsed
-                self.generatedICS = text
-                self.selectedEventID = parsed.first?.id
-                self.fileName = url.lastPathComponent
-                self.status = "Loaded \(parsed.count) events from ICS."
-
-                saveCurrentSession()
-            }
-        } catch {
-            self.events = []
-            self.generatedICS = ""
-            self.selectedEventID = nil
-            self.status = "Failed: \(error.localizedDescription)"
-            self.isGenerating = false
-
-            saveCurrentSession()
-        }
-    }
-
-    private func loadTimelineJSON(data: Data, fileName: String) {
-        let options = TimelineOptions(
-            lastDays: lastDays,
-            minStayMinutes: minStayMinutes,
-            removeHomeOverMinutes: removeHomeOverMinutes
+    private var rightTimelineWaterfall: some View {
+        TimelineWaterfallView(
+            events: viewModel.filteredEvents,
+            selectedEventID: $viewModel.selectedEventID
         )
-
-        isGenerating = true
-        status = googleAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Generating with local cache/fallback only. Add Google API key for uncached place names."
-            : "Resolving unique placeIDs with local cache first..."
-
-        Task {
-            do {
-                let generated = try await TimelineProcessor.generateEvents(
-                    from: data,
-                    options: options,
-                    apiKey: googleAPIKey
-                )
-
-                let cacheCount = await LocationCacheStore.shared.count()
-                let icsText = ICSWriter.makeICS(events: generated)
-
-                await MainActor.run {
-                    self.events = generated
-                    self.generatedICS = icsText
-                    self.selectedEventID = generated.first?.id
-                    self.fileName = fileName
-                    self.cacheCount = cacheCount
-                    self.status = "Generated \(generated.count) events. Location cache: \(cacheCount)."
-                    self.isGenerating = false
-
-                    self.saveCurrentSession()
-                }
-            } catch {
-                await MainActor.run {
-                    self.events = []
-                    self.generatedICS = ""
-                    self.selectedEventID = nil
-                    self.status = "Failed: \(error.localizedDescription)"
-                    self.isGenerating = false
-
-                    self.saveCurrentSession()
-                }
-            }
-        }
-    }
-
-    private func exportICS() {
-        let icsText = generatedICS.isEmpty
-            ? ICSWriter.makeICS(events: events)
-            : generatedICS
-
-        let panel = NSSavePanel()
-        panel.allowedContentTypes = [UTType(filenameExtension: "ics") ?? .data]
-        panel.nameFieldStringValue = "timeline-preview.ics"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try icsText.write(to: url, atomically: true, encoding: .utf8)
-                status = "Exported \(events.count) events to \(url.lastPathComponent)."
-            } catch {
-                status = "Export failed: \(error.localizedDescription)"
-            }
-        }
-    }
-
-    private func restoreLastSession() {
-        Task {
-            let session = await SessionStore.shared.load()
-
-            guard let session else {
-                return
-            }
-
-            let cacheCount = await LocationCacheStore.shared.count()
-
-            await MainActor.run {
-                self.events = session.events
-                self.selectedEventID = session.selectedEventID
-                self.fileName = session.fileName
-                self.generatedICS = session.generatedICS
-                self.cacheCount = cacheCount
-
-                if !session.events.isEmpty {
-                    self.status = "Restored \(session.events.count) events from last session."
-                }
-            }
-        }
-    }
-
-    private func saveCurrentSession() {
-        let session = TracesSession(
-            events: events,
-            selectedEventID: selectedEventID,
-            fileName: fileName,
-            generatedICS: generatedICS,
-            savedAt: Date()
-        )
-
-        Task {
-            await SessionStore.shared.save(session)
-        }
-    }
-
-    private func clearLastSession() {
-        events = []
-        selectedEventID = nil
-        fileName = "Open .ics or Timeline JSON"
-        query = ""
-        status = "Last session cleared."
-        generatedICS = ""
-
-        Task {
-            await SessionStore.shared.clear()
-        }
-    }
-
-    private func refreshCacheCount() {
-        Task {
-            let count = await LocationCacheStore.shared.count()
-
-            await MainActor.run {
-                self.cacheCount = count
-            }
-        }
-    }
-
-    private func clearLocationCache() {
-        Task {
-            await LocationCacheStore.shared.clear()
-            let count = await LocationCacheStore.shared.count()
-
-            await MainActor.run {
-                self.cacheCount = count
-                self.status = "Location cache cleared."
-            }
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(.background)
     }
 }
