@@ -1,13 +1,30 @@
 import SwiftUI
 import Foundation
 
+// MARK: - Conflict candidate detail UI
+// This file owns the selected-event detail panel and the A/B/C conflict review
+// controls. It does not decide which event wins; it only renders candidates and
+// asks TracesViewModel to promote the selected candidate when the user clicks the
+// explicit final-event button.
+
+/// Sentinel ID used by detail/map views to mean "the current primary event".
+/// Suppressed candidates use their own real UUIDs.
 let primaryCandidateID = "__primary__"
 
+/// Center-bottom detail view for the currently selected event.
+///
+/// Controlled view area:
+/// - event title and metadata
+/// - conflict candidate panel
+/// - final-event replacement button
+/// - raw generated description text
 struct EventDetailView: View {
     let event: ICSEvent
     @Binding var selectedConflictCandidateID: String?
     let onPromoteConflictCandidate: () -> Void
 
+    /// Promotion is only valid when B/C/etc is selected. Selecting A means the
+    /// existing final event is already active, so there is nothing to promote.
     private var canPromote: Bool {
         guard let selectedConflictCandidateID else {
             return false
@@ -23,6 +40,8 @@ struct EventDetailView: View {
                     .font(.largeTitle.bold())
                     .textSelection(.enabled)
 
+                // Shows A/B/C only when TimelineProcessor found impossible or
+                // highly overlapping location candidates.
                 if !event.suppressedCandidates.isEmpty {
                     ConflictCandidatesView(
                         event: event,
@@ -31,6 +50,8 @@ struct EventDetailView: View {
                     )
                 }
 
+                // Main event metadata. These are the values that will be used by
+                // ICS export unless the user promotes another candidate first.
                 VStack(alignment: .leading, spacing: 8) {
                     Label(dateRange(event), systemImage: "calendar")
 
@@ -49,6 +70,8 @@ struct EventDetailView: View {
                     }
                 }
 
+                // Duplicate promotion button outside the warning card so the
+                // action remains visible even after scrolling through details.
                 if canPromote {
                     Button {
                         onPromoteConflictCandidate()
@@ -74,6 +97,10 @@ struct EventDetailView: View {
     }
 }
 
+/// Warning/review card for overlapping location candidates.
+///
+/// A is the current final event. B/C/etc are suppressed candidates that occurred
+/// in the same or overlapping time window and may be more correct.
 struct ConflictCandidatesView: View {
     let event: ICSEvent
     @Binding var selectedConflictCandidateID: String?
@@ -106,6 +133,8 @@ struct ConflictCandidatesView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 8) {
+                // A is not stored in suppressedCandidates. It represents the
+                // current ICSEvent itself.
                 CandidateRow(
                     label: "A",
                     title: event.summary,
@@ -117,6 +146,7 @@ struct ConflictCandidatesView: View {
                     selectedConflictCandidateID = nil
                 }
 
+                // B/C/etc are the alternate places kept for user review.
                 ForEach(Array(event.suppressedCandidates.enumerated()), id: \.element.id) { index, candidate in
                     CandidateRow(
                         label: candidateLabel(index + 1),
@@ -176,6 +206,8 @@ struct ConflictCandidatesView: View {
     }
 }
 
+/// One clickable A/B/C row. The row updates preview selection only; it does not
+/// mutate the final generated event by itself.
 struct CandidateRow: View {
     let label: String
     let title: String
