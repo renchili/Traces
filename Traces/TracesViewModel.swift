@@ -10,55 +10,36 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class TracesViewModel: ObservableObject {
-    // MARK: Rendered state
-    // Current working event set. This is the source for the left list, map,
-    // detail panel, timeline waterfall, session save, and ICS export.
     @Published var events: [ICSEvent] = []
-
-    // The event selected in the left list or timeline waterfall.
     @Published var selectedEventID: String?
-
-    // The selected suppressed candidate for the selected event. Nil means the
-    // primary/final event candidate A is selected.
     @Published var selectedConflictCandidateID: String?
-
-    // Display name for the last loaded/imported file.
     @Published var fileName: String = "Open .ics or Timeline JSON"
-
-    // Search query used by `filteredEvents`.
     @Published var query: String = ""
-
-    // User-visible status line for import/export/cache/session actions.
     @Published var status: String = ""
-
-    // Latest generated ICS text. It is refreshed after import or candidate
-    // promotion, and used by export.
     @Published var generatedICS: String = ""
-
-    // Import spinner state.
     @Published var isGenerating = false
-
-    // Settings popover state.
     @Published var showingGeneratorSettings = false
-
-    // Number of cached resolved locations shown in the settings panel.
     @Published var cacheCount: Int = 0
 
-    // MARK: UserDefaults-backed settings
-    // Development setting for Google location lookup. Production builds should
-    // move this to Keychain or a backend resolver.
     var googleAPIKey: String {
-        get {
-            UserDefaults.standard.string(forKey: "traces.googleAPIKey") ?? ""
-        }
+        get { UserDefaults.standard.string(forKey: "traces.googleAPIKey") ?? "" }
         set {
             UserDefaults.standard.set(newValue, forKey: "traces.googleAPIKey")
             objectWillChange.send()
         }
     }
 
-    // Import window in days relative to the newest timestamp inside the Timeline
-    // JSON file, not relative to the current system time.
+    var exportFilePath: String {
+        get {
+            UserDefaults.standard.string(forKey: "traces.exportFilePath")
+                ?? "~/Downloads/Traces/timeline-preview.ics"
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "traces.exportFilePath")
+            objectWillChange.send()
+        }
+    }
+
     var lastDays: Int {
         get {
             let value = UserDefaults.standard.integer(forKey: "traces.lastDays")
@@ -70,7 +51,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Minimum visit duration to keep as an event.
     var minStayMinutes: Double {
         get {
             let value = UserDefaults.standard.double(forKey: "traces.minStayMinutes")
@@ -82,7 +62,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Removes long home-like/aliased visits from generated events.
     var removeHomeOverMinutes: Double {
         get {
             let value = UserDefaults.standard.double(forKey: "traces.removeHomeOverMinutes")
@@ -94,18 +73,13 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // MARK: Derived state
-    // Selected event object used by map/detail rendering.
     var selectedEvent: ICSEvent? {
         events.first { $0.id == selectedEventID }
     }
 
-    // Search filter for the left list, map, and timeline views.
     var filteredEvents: [ICSEvent] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else {
-            return events
-        }
+        guard !q.isEmpty else { return events }
 
         return events.filter {
             $0.summary.lowercased().contains(q)
@@ -114,23 +88,16 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // MARK: Lifecycle
-    // Called by ContentView on launch. Restores previous work and refreshes the
-    // location-cache counter shown in settings.
     func onAppear() {
         restoreLastSession()
         refreshCacheCount()
     }
 
-    // Reset candidate preview whenever the user changes the selected event.
     func didSelectEventChanged() {
         selectedConflictCandidateID = nil
         saveCurrentSession()
     }
 
-    // MARK: Conflict promotion
-    // Converts selected B/C/etc candidate into the final generated event. The old
-    // primary event is kept as a suppressed candidate so the user can switch back.
     func promoteSelectedConflictCandidate() {
         guard
             let selectedEventID = selectedEventID,
@@ -151,9 +118,6 @@ final class TracesViewModel: ObservableObject {
         saveCurrentSession()
     }
 
-    // Builds a new ICSEvent where the selected suppressed candidate becomes the
-    // final location/title/URL/coordinate while all previous alternatives remain
-    // reviewable.
     private func promote(candidate: SuppressedCandidate, in event: ICSEvent) -> ICSEvent {
         let oldPrimary = SuppressedCandidate(
             id: "old-primary-\(event.id)",
@@ -171,13 +135,9 @@ final class TracesViewModel: ObservableObject {
             )
         )
 
-        var newSuppressed = event.suppressedCandidates
-            .filter { $0.id != candidate.id }
-
+        var newSuppressed = event.suppressedCandidates.filter { $0.id != candidate.id }
         newSuppressed.insert(oldPrimary, at: 0)
 
-        // Recalculate distances so they are now measured from the newly promoted
-        // final event instead of the previous primary event.
         let normalizedSuppressed = newSuppressed.map { item in
             SuppressedCandidate(
                 id: item.id,
@@ -219,7 +179,6 @@ final class TracesViewModel: ObservableObject {
         )
     }
 
-    // Candidate display location used after promotion.
     private func candidateLocation(_ candidate: SuppressedCandidate) -> String {
         if let lat = candidate.lat, let lon = candidate.lon {
             return String(format: "%.6f, %.6f", lat, lon)
@@ -232,7 +191,6 @@ final class TracesViewModel: ObservableObject {
         return candidate.title
     }
 
-    // Google Maps URL for a promoted candidate.
     private func candidateMapURL(_ candidate: SuppressedCandidate) -> String {
         if !candidate.placeID.isEmpty {
             return "https://www.google.com/maps/place/?q=place_id:\(candidate.placeID)"
@@ -249,8 +207,6 @@ final class TracesViewModel: ObservableObject {
         return ""
     }
 
-    // Adds a clear audit note to the generated event description when the user
-    // manually changes the final location.
     private func updatedDescription(
         oldDescription: String,
         newTitle: String,
@@ -276,8 +232,6 @@ final class TracesViewModel: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
-    // Extracts a place ID from existing event metadata so the old primary can be
-    // kept as a suppressed candidate after promotion.
     private func extractPlaceID(from event: ICSEvent) -> String? {
         let combined = "\(event.url)\n\(event.description)\n\(event.location)"
 
@@ -305,16 +259,13 @@ final class TracesViewModel: ObservableObject {
         return nil
     }
 
-    // Haversine distance used for conflict candidate display.
     private func distanceMeters(
         lat1: Double?,
         lon1: Double?,
         lat2: Double?,
         lon2: Double?
     ) -> Double? {
-        guard let lat1, let lon1, let lat2, let lon2 else {
-            return nil
-        }
+        guard let lat1, let lon1, let lat2, let lon2 else { return nil }
 
         let r = 6_371_000.0
         let p1 = lat1 * .pi / 180
@@ -329,8 +280,6 @@ final class TracesViewModel: ObservableObject {
         return 2 * r * asin(sqrt(a))
     }
 
-    // MARK: File open/import/export actions
-    // Opens a native file picker for either .ics preview or Timeline JSON import.
     func openFile(allowedExtensions: [String]) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = allowedExtensions.compactMap {
@@ -344,7 +293,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Routes dropped/selected files by extension.
     func loadFile(_ url: URL) {
         do {
             let data = try Data(contentsOf: url)
@@ -361,7 +309,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Loads an existing .ics file for preview only.
     func openICSPreview(url: URL) {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
@@ -387,8 +334,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Imports Timeline JSON, resolves locations, then incrementally merges the
-    // imported events into the current working session.
     func importTimelineJSON(data: Data, fileName: String) {
         let options = TimelineOptions(
             lastDays: lastDays,
@@ -446,28 +391,54 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Returns the current final event list as ICS text for SwiftUI fileExporter.
     func currentICSText() -> String {
         generatedICS.isEmpty
             ? ICSWriter.makeICS(events: events)
             : generatedICS
     }
 
-    // Deprecated AppKit export path kept as a wrapper for non-UI callers.
-    // ContentView now uses SwiftUI fileExporter to avoid NSSavePanel crashes.
     func exportICS() {
-        generatedICS = currentICSText()
+        let trimmedPath = exportFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else {
+            status = "Export failed: export path is empty."
+            return
+        }
+
+        var path = NSString(string: trimmedPath).expandingTildeInPath
+
+        if path.hasSuffix("/") {
+            path += "timeline-preview.ics"
+        }
+
+        if URL(fileURLWithPath: path).pathExtension.isEmpty {
+            path += ".ics"
+        }
+
+        let url = URL(fileURLWithPath: path)
+        let directory = url.deletingLastPathComponent()
+
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+
+            let icsText = currentICSText()
+            try icsText.write(to: url, atomically: true, encoding: .utf8)
+
+            generatedICS = icsText
+            exportFilePath = url.path
+            status = "Exported \(events.count) events to \(url.path)."
+        } catch {
+            status = "Export failed: \(error.localizedDescription). Path: \(url.path)"
+        }
     }
 
-    // MARK: Session/cache actions
-    // Restores previous working state from local session storage.
     func restoreLastSession() {
         Task {
             let session = await SessionStore.shared.load()
 
-            guard let session else {
-                return
-            }
+            guard let session else { return }
 
             let cacheCount = await LocationCacheStore.shared.count()
 
@@ -486,8 +457,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Saves the current working state. This is intentionally lightweight and is
-    // called after selection/import/promotion changes.
     func saveCurrentSession() {
         let session = TracesSession(
             events: events,
@@ -502,7 +471,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Clears only the working session, not the location cache.
     func clearLastSession() {
         events = []
         selectedEventID = nil
@@ -517,7 +485,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Refreshes the location cache count displayed in settings.
     func refreshCacheCount() {
         Task {
             let count = await LocationCacheStore.shared.count()
@@ -528,8 +495,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    // Clears cached place/coordinate resolutions. Existing generated events are
-    // not modified; the cache affects future imports/resolution only.
     func clearLocationCache() {
         Task {
             await LocationCacheStore.shared.clear()
