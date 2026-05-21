@@ -1,6 +1,17 @@
 import SwiftUI
 import MapKit
 
+// MARK: - Map preview views
+// This file is the only place that should directly use MapKit. It renders the
+// center-top map panel, maps selected events/candidates to annotations, draws
+// conflict distance lines, and bridges MapKit selection back into SwiftUI state.
+
+/// Header/container for the map area in the center split panel.
+///
+/// Controlled view area:
+/// - map title
+/// - selected coordinate/candidate count summary
+/// - embedded `EventMapView`
 struct EventMapPanel: View {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
@@ -47,6 +58,13 @@ struct EventMapPanel: View {
     }
 }
 
+/// AppKit MapKit bridge used by SwiftUI.
+///
+/// Responsibilities:
+/// - render all event coordinates when no event is selected
+/// - render only A/B/C candidates when one event is selected
+/// - draw polylines from A to suppressed candidates
+/// - update selected conflict candidate when the user clicks a map marker
 struct EventMapView: NSViewRepresentable {
     let events: [ICSEvent]
     let selectedEventID: String?
@@ -65,7 +83,13 @@ struct EventMapView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MKMapView, context: Context) {
+        // Keep the coordinator bound to the latest SwiftUI binding. This matters
+        // because SwiftUI may recreate bindings while reusing the NSView.
         context.coordinator.selectedConflictCandidateID = $selectedConflictCandidateID
+
+        // Programmatic annotation selection during updateNSView triggers MapKit
+        // delegate callbacks. Guard those callbacks so we do not publish SwiftUI
+        // state changes during a view update.
         context.coordinator.isApplyingSwiftUIUpdate = true
 
         nsView.removeAnnotations(nsView.annotations)
@@ -105,6 +129,8 @@ struct EventMapView: NSViewRepresentable {
                     animated: true
                 )
             } else {
+                // When there are conflict candidates, keep all candidates visible
+                // instead of zooming into only the selected marker.
                 nsView.showAnnotations(annotations, animated: true)
             }
 
@@ -127,6 +153,7 @@ struct EventMapView: NSViewRepresentable {
         }
     }
 
+    /// Creates annotations for every visible event when no specific event is selected.
     private func allEventAnnotations() -> [TracesMapAnnotation] {
         events.compactMap { event in
             guard let lat = event.lat, let lon = event.lon else {
@@ -144,10 +171,12 @@ struct EventMapView: NSViewRepresentable {
         }
     }
 
+    /// Creates A/B/C annotations for the selected event and its suppressed candidates.
     private func selectedEventAnnotations(for event: ICSEvent) -> [TracesMapAnnotation] {
         let currentSelection = selectedConflictCandidateID ?? primaryCandidateID
         var annotations: [TracesMapAnnotation] = []
 
+        // A represents the current final event itself.
         if let lat = event.lat, let lon = event.lon {
             annotations.append(
                 TracesMapAnnotation(
@@ -161,6 +190,7 @@ struct EventMapView: NSViewRepresentable {
             )
         }
 
+        // B/C/etc are alternate suppressed candidates kept for user review.
         for (index, candidate) in event.suppressedCandidates.enumerated() {
             guard let lat = candidate.lat, let lon = candidate.lon else {
                 continue
@@ -184,6 +214,8 @@ struct EventMapView: NSViewRepresentable {
         return annotations
     }
 
+    /// Draws lines from the current final event A to each suppressed candidate.
+    /// The selected candidate line is marked via `title` for renderer styling.
     private func conflictOverlays(for event: ICSEvent) -> [MKPolyline] {
         guard let lat = event.lat, let lon = event.lon else {
             return []
@@ -224,6 +256,7 @@ struct EventMapView: NSViewRepresentable {
         return "Overlapping candidate"
     }
 
+    /// MapKit delegate object. Handles user-driven marker selection and polyline styling.
     final class Coordinator: NSObject, MKMapViewDelegate {
         var selectedConflictCandidateID: Binding<String?>
         var isApplyingSwiftUIUpdate = false
@@ -241,6 +274,7 @@ struct EventMapView: NSViewRepresentable {
                 return
             }
 
+            // User clicks are safe to bridge back to SwiftUI asynchronously.
             DispatchQueue.main.async {
                 if annotation.candidateID == primaryCandidateID {
                     self.selectedConflictCandidateID.wrappedValue = nil
@@ -269,6 +303,10 @@ struct EventMapView: NSViewRepresentable {
     }
 }
 
+/// Single annotation model used by Traces maps.
+///
+/// Do not reintroduce a generic `EventAnnotation` type; that caused duplicate
+/// type lookup problems when EventViews.swift previously contained map code.
 final class TracesMapAnnotation: NSObject, MKAnnotation {
     let eventID: String
     let candidateID: String
