@@ -1,14 +1,27 @@
 import Foundation
 
+// MARK: - Google location resolver
+// Resolves Google Timeline place IDs / coordinates into displayable names,
+// addresses, map URLs, and merge keys. The resolver always uses cache first so
+// repeated imports do not keep calling Google APIs for the same place.
+
 final class GoogleLocationResolver {
     private let apiKey: String
+
+    // Fast in-memory cache for one import run.
     private var memoryCache: [String: ResolvedLocation] = [:]
+
+    // Persistent cache shared across app launches/imports.
     private let persistentCache = LocationCacheStore.shared
 
     init(apiKey: String) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Resolves a batch of unique location requests.
+    ///
+    /// Returned dictionary is keyed by `LocationResolveRequest.cacheKey` so
+    /// TimelineProcessor can attach results back to visits without relying on order.
     func resolveAll(_ requests: [LocationResolveRequest]) async -> [String: ResolvedLocation] {
         var result: [String: ResolvedLocation] = [:]
         let uniqueRequests = Array(Set(requests))
@@ -20,6 +33,7 @@ final class GoogleLocationResolver {
         return result
     }
 
+    /// Resolves one request through memory cache, persistent cache, then network/fallback.
     private func resolve(_ request: LocationResolveRequest) async -> ResolvedLocation {
         if let cached = memoryCache[request.cacheKey] {
             return withCacheSource(cached, suffix: "memory_cache")
@@ -38,6 +52,8 @@ final class GoogleLocationResolver {
 
         memoryCache[request.cacheKey] = resolved
 
+        // Only persist successful API-backed results. Fallbacks may be caused by
+        // temporary network/API errors and should not poison the cache forever.
         if resolved.shouldPersistToCache {
             await persistentCache.set(resolved, for: request.cacheKey)
         }
@@ -45,6 +61,7 @@ final class GoogleLocationResolver {
         return resolved
     }
 
+    /// Network resolution cascade. Place ID is preferred over reverse geocoding.
     private func resolveUncached(placeID: String, lat: Double?, lon: Double?) async -> ResolvedLocation {
         if apiKey.isEmpty {
             return fallback(
@@ -56,18 +73,22 @@ final class GoogleLocationResolver {
         }
 
         if !placeID.isEmpty {
+            // Highest quality: Places API New by place resource ID.
             if let resolved = await resolveByPlaceIDNew(placeID, lat: lat, lon: lon) {
                 return resolved
             }
 
+            // Compatibility fallback for projects with legacy Places enabled.
             if let resolved = await resolveByPlaceIDLegacy(placeID, lat: lat, lon: lon) {
                 return resolved
             }
 
+            // Geocoding by place_id often works even when Places is unavailable.
             if let resolved = await geocodeByPlaceID(placeID, lat: lat, lon: lon) {
                 return resolved
             }
 
+            // Last API attempt: reverse geocode coordinates if present.
             if let lat, let lon, let resolved = await reverseGeocodeByLatLng(lat: lat, lon: lon, placeID: placeID) {
                 return resolved
             }
@@ -101,6 +122,7 @@ final class GoogleLocationResolver {
         )
     }
 
+    /// Places API New lookup. Returns the best display name/address for a place ID.
     private func resolveByPlaceIDNew(_ placeID: String, lat: Double?, lon: Double?) async -> ResolvedLocation? {
         let encodedPlaceID = placeID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? placeID
 
@@ -160,6 +182,7 @@ final class GoogleLocationResolver {
         }
     }
 
+    /// Legacy Places Details lookup.
     private func resolveByPlaceIDLegacy(_ placeID: String, lat: Double?, lon: Double?) async -> ResolvedLocation? {
         var components = URLComponents(string: "https://maps.googleapis.com/maps/api/place/details/json")
         components?.queryItems = [
@@ -227,6 +250,7 @@ final class GoogleLocationResolver {
         }
     }
 
+    /// Geocoding API lookup using place_id.
     private func geocodeByPlaceID(_ placeID: String, lat: Double?, lon: Double?) async -> ResolvedLocation? {
         var components = URLComponents(string: "https://maps.googleapis.com/maps/api/geocode/json")
         components?.queryItems = [
@@ -294,6 +318,7 @@ final class GoogleLocationResolver {
         }
     }
 
+    /// Reverse geocoding fallback when coordinates are available.
     private func reverseGeocodeByLatLng(lat: Double, lon: Double, placeID: String) async -> ResolvedLocation? {
         var components = URLComponents(string: "https://maps.googleapis.com/maps/api/geocode/json")
         components?.queryItems = [
@@ -356,6 +381,7 @@ final class GoogleLocationResolver {
         }
     }
 
+    /// Local fallback used when API resolution is unavailable or fails.
     private func fallback(placeID: String, lat: Double?, lon: Double?, reason: String) -> ResolvedLocation {
         let coord = Self.coordText(lat: lat, lon: lon)
 
@@ -396,6 +422,7 @@ final class GoogleLocationResolver {
         )
     }
 
+    /// Adds cache provenance to a cached resolved location for debugging.
     private func withCacheSource(_ cached: ResolvedLocation, suffix: String) -> ResolvedLocation {
         ResolvedLocation(
             title: cached.title,
@@ -408,6 +435,7 @@ final class GoogleLocationResolver {
         )
     }
 
+    /// Builds a stable Google Maps URL from place ID or coordinates.
     private func googleMapsURL(placeID: String, lat: Double?, lon: Double?) -> String {
         if !placeID.isEmpty {
             return "https://www.google.com/maps/place/?q=place_id:\(placeID)"
