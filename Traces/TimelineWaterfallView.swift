@@ -140,7 +140,11 @@ struct TimelineCanvas: View {
                     .frame(width: rect.width, height: rect.height, alignment: .topLeading)
                     .position(x: rect.midX, y: rect.midY)
                     .onTapGesture {
-                        selectedEventID = item.event.id
+                        if selectedEventID == item.event.id {
+                            selectedEventID = nil
+                        } else {
+                            selectedEventID = item.event.id
+                        }
                     }
                     .zIndex(item.event.id == selectedEventID ? 10 : 1)
                 }
