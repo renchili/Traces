@@ -1,6 +1,12 @@
 import Foundation
 
+// MARK: - ICS writer
+// Converts the current final ICSEvent list into an .ics calendar file.
+// Conflict candidates are kept in app/session data for review, but only the
+// current final event itself is exported as a VEVENT.
+
 final class ICSWriter {
+    /// Creates a complete VCALENDAR document for the supplied final events.
     static func makeICS(events: [ICSEvent]) -> String {
         let now = utcICSDate(Date())
 
@@ -39,6 +45,8 @@ final class ICSWriter {
                 lines.append("URL:\(event.url)")
             }
 
+            // GEO is supported by many calendar clients and keeps the coordinate
+            // available even when location text is only an address/place name.
             if let lat = event.lat, let lon = event.lon {
                 lines.append("GEO:\(String(format: "%.6f", lat));\(String(format: "%.6f", lon))")
             }
@@ -56,6 +64,7 @@ final class ICSWriter {
         return output
     }
 
+    /// ICS UTC timestamp formatter, e.g. 20260521T120000Z.
     private static func utcICSDate(_ date: Date) -> String {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
@@ -64,6 +73,7 @@ final class ICSWriter {
         return f.string(from: date)
     }
 
+    /// Escapes text according to basic iCalendar text rules.
     private static func escape(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\\", with: "\\\\")
@@ -72,6 +82,7 @@ final class ICSWriter {
             .replacingOccurrences(of: ";", with: "\\;")
     }
 
+    /// Folds long ICS lines with CRLF + space continuation.
     private static func foldLine(_ line: String) -> String {
         guard line.count > 73 else {
             return line + "\r\n"
@@ -90,7 +101,12 @@ final class ICSWriter {
     }
 }
 
+// MARK: - ICS parser
+// Lightweight parser used for previewing existing .ics files. It is intentionally
+// conservative and extracts only the fields Traces can display/export again.
+
 final class ICSParser {
+    /// Parses VEVENT blocks into ICSEvent values for preview.
     static func parse(_ text: String) -> [ICSEvent] {
         let unfolded = unfoldICS(text)
         let lines = unfolded.components(separatedBy: .newlines)
@@ -138,6 +154,8 @@ final class ICSParser {
                 var key = String(line[..<idx])
                 let value = String(line[line.index(after: idx)...])
 
+                // Drop parameters such as DTSTART;TZID=... so the storage key is
+                // just DTSTART. This parser does not currently preserve TZID.
                 if let semi = key.firstIndex(of: ";") {
                     key = String(key[..<semi])
                 }
@@ -151,6 +169,7 @@ final class ICSParser {
         }
     }
 
+    /// Joins folded ICS continuation lines before parsing key/value pairs.
     private static func unfoldICS(_ text: String) -> String {
         let normalized = text
             .replacingOccurrences(of: "\r\n", with: "\n")
@@ -171,6 +190,7 @@ final class ICSParser {
         return result.joined(separator: "\n")
     }
 
+    /// Reverses the basic escaping done by ICSWriter.
     private static func unescape(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\\n", with: "\n")
@@ -179,6 +199,7 @@ final class ICSParser {
             .replacingOccurrences(of: "\\\\", with: "\\")
     }
 
+    /// Supports UTC datetime, floating datetime, and date-only values.
     private static func parseICSDate(_ value: String?) -> Date? {
         guard let value, !value.isEmpty else { return nil }
 
@@ -202,6 +223,7 @@ final class ICSParser {
         return nil
     }
 
+    /// Parses GEO:lat;lon into coordinate fields on ICSEvent.
     private static func parseGEO(_ value: String?) -> (lat: Double, lon: Double)? {
         guard let value else { return nil }
 
