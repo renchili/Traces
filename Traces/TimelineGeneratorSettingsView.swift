@@ -1,5 +1,18 @@
 import SwiftUI
 
+// MARK: - Timeline import settings popover
+// This file owns only the settings UI shown from the toolbar. Values are passed
+// in as bindings from TracesViewModel; this view does not import files or call
+// Google APIs directly.
+
+/// Settings panel for Timeline JSON generation.
+///
+/// Controlled UI:
+/// - Google API key input
+/// - location cache count and clear button
+/// - import date range
+/// - minimum stay threshold
+/// - long home-like stay filtering threshold
 struct TimelineGeneratorSettingsView: View {
     @Binding var googleAPIKey: String
     @Binding var lastDays: Int
@@ -23,6 +36,9 @@ struct TimelineGeneratorSettingsView: View {
 
             Divider()
 
+            // API key is stored by the view model. This is acceptable for local
+            // development; production distribution should move it to Keychain or
+            // a backend resolver.
             VStack(alignment: .leading, spacing: 6) {
                 Text("Google API Key")
                     .font(.caption)
@@ -39,6 +55,8 @@ struct TimelineGeneratorSettingsView: View {
 
             Divider()
 
+            // Cache actions only affect future location resolution. Existing
+            // imported events remain unchanged until re-imported.
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Location Cache")
@@ -58,6 +76,7 @@ struct TimelineGeneratorSettingsView: View {
 
             Divider()
 
+            // These settings are applied the next time a Timeline JSON file is opened.
             VStack(alignment: .leading, spacing: 10) {
                 SettingStepperRow(
                     title: "Date range",
@@ -97,6 +116,7 @@ struct TimelineGeneratorSettingsView: View {
     }
 }
 
+/// Reusable stepper row used by the settings panel.
 struct SettingStepperRow: View {
     let title: String
     let valueText: String
