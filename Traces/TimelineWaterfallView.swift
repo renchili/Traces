@@ -1,21 +1,35 @@
 import SwiftUI
 import Foundation
 
+// MARK: - Timeline waterfall
+// Owns the right-side time overview. This file renders timed events as vertical
+// blocks, handles overlap columns, and highlights the selected event. It does not
+// import data, resolve places, export ICS, or mutate event content.
+
+/// Right-side timeline panel shown in the main three-pane layout.
+///
+/// Controlled view area:
+/// - timeline header and event count
+/// - empty state for untimed data
+/// - scrollable hour grid and event blocks
 struct TimelineWaterfallView: View {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
 
+    // Only events with both start and end can be drawn as blocks.
     private var datedEvents: [ICSEvent] {
         events
             .filter { $0.start != nil && $0.end != nil }
             .sorted { ($0.start ?? .distantPast) < ($1.start ?? .distantPast) }
     }
 
+    // Anchor the grid at the start of the first event day.
     private var dayStart: Date? {
         guard let first = datedEvents.first?.start else { return nil }
         return Calendar.current.startOfDay(for: first)
     }
 
+    // Extend the grid to the start of the day after the latest event end.
     private var dayEnd: Date? {
         guard let last = datedEvents.compactMap(\.end).max() else { return nil }
         return Calendar.current.date(
@@ -63,6 +77,7 @@ struct TimelineWaterfallView: View {
                             availableWidth: width - 24
                         )
                         .padding(12)
+                        // Force recalculation when split-view width changes.
                         .id(widthBucket)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -74,6 +89,7 @@ struct TimelineWaterfallView: View {
     }
 }
 
+/// Draws the hour grid and places event blocks into non-overlapping columns.
 struct TimelineCanvas: View {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
@@ -87,6 +103,7 @@ struct TimelineCanvas: View {
     private let contentLeftPadding: CGFloat = 8
     private let contentRightPadding: CGFloat = 8
 
+    /// Internal layout result for one event block.
     private struct LayoutItem: Identifiable {
         let id: String
         let event: ICSEvent
@@ -132,6 +149,7 @@ struct TimelineCanvas: View {
         .frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)
     }
 
+    /// Background hour grid and left-side hour labels.
     private func hourGrid(totalWidth: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(0...Int(totalHours), id: \.self) { hour in
@@ -152,6 +170,7 @@ struct TimelineCanvas: View {
         }
     }
 
+    /// Splits events into overlapping groups, then lays each group into columns.
     private func makeLayoutItems() -> [LayoutItem] {
         let sorted = events.sorted {
             let lhs = $0.start ?? .distantPast
@@ -168,6 +187,8 @@ struct TimelineCanvas: View {
         var currentGroup: [ICSEvent] = []
         var currentGroupMaxEnd: Date?
 
+        // Group events whose time ranges overlap, so each group can be assigned
+        // columns independently.
         for event in sorted {
             guard let start = event.start, let end = event.end else {
                 continue
@@ -202,6 +223,8 @@ struct TimelineCanvas: View {
         return result
     }
 
+    /// Greedy interval-column layout: put each event into the first column whose
+    /// previous event has already ended; otherwise create a new column.
     private func layoutGroup(_ group: [ICSEvent]) -> [LayoutItem] {
         let sorted = group.sorted {
             let lhs = $0.start ?? .distantPast
@@ -252,6 +275,7 @@ struct TimelineCanvas: View {
         }
     }
 
+    /// Converts one timed event into a rectangle inside the canvas.
     private func rectForEvent(_ item: LayoutItem, totalWidth: CGFloat) -> CGRect? {
         guard
             let dayStart,
@@ -303,6 +327,7 @@ struct TimelineCanvas: View {
     }
 }
 
+/// One visual event block in the waterfall.
 struct TimelineEventBlock: View {
     let event: ICSEvent
     let isSelected: Bool
