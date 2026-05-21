@@ -84,16 +84,40 @@ struct ContentView: View {
                     .padding(.bottom, 6)
             }
 
-            // Event selection drives all other panels: map, detail, and timeline.
-            List(viewModel.filteredEvents, selection: $viewModel.selectedEventID) { event in
-                EventRow(event: event, compact: false)
-                    .tag(event.id)
-                    .contentShape(Rectangle())
+            // Custom list instead of SwiftUI List selection because macOS List
+            // does not toggle nil when clicking an already-selected row.
+            // Required behavior: click event once to select, click the same event
+            // again to clear selection and return the map to all-events mode.
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(viewModel.filteredEvents) { event in
+                        EventRow(event: event, compact: false)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.18) : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 1)
+                            )
+                            .padding(.horizontal, 8)
+                            .onTapGesture {
+                                if viewModel.selectedEventID == event.id {
+                                    viewModel.selectedEventID = nil
+                                } else {
+                                    viewModel.selectedEventID = event.id
+                                }
+                                viewModel.didSelectEventChanged()
+                            }
+                    }
+                }
+                .padding(.vertical, 4)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onChange(of: viewModel.selectedEventID) {
-                viewModel.didSelectEventChanged()
-            }
 
             Divider()
 
@@ -210,7 +234,7 @@ struct ContentView: View {
                     ContentUnavailableView(
                         "No event selected",
                         systemImage: "doc.text.magnifyingglass",
-                        description: Text("Select an event from the left list.")
+                        description: Text("Select an event from the left list, timeline, or map.")
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
