@@ -12,41 +12,57 @@ struct EventRow: View {
     let compact: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            // Title row. The orange badge shows how many alternate conflict
-            // candidates are attached to this final event.
-            HStack(spacing: 6) {
-                Text(event.summary)
-                    .font(.headline)
-                    .lineLimit(compact ? 2 : 1)
-                    .truncationMode(.tail)
-
-                if !event.suppressedCandidates.isEmpty {
-                    Text("+\(event.suppressedCandidates.count)")
-                        .font(.caption.bold())
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.orange.opacity(0.22), in: Capsule())
-                        .foregroundStyle(.orange)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.accentColor.opacity(0.12))
+                    Image(systemName: event.suppressedCandidates.isEmpty ? "mappin.and.ellipse" : "exclamationmark.triangle.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(event.suppressedCandidates.isEmpty ? Color.accentColor : TracesTheme.warning)
                 }
-            }
+                .frame(width: 30, height: 30)
 
-            // Shared display time string.
-            Text(dateRange(event))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(event.summary)
+                            .font(.system(size: compact ? 13 : 14, weight: .semibold))
+                            .lineLimit(compact ? 2 : 1)
+                            .truncationMode(.tail)
 
-            // Location preview is omitted in compact mode.
-            if !compact && !event.location.isEmpty {
-                Text(event.location)
+                        if !event.suppressedCandidates.isEmpty {
+                            TracesBadge(
+                                "+\(event.suppressedCandidates.count)",
+                                systemImage: "point.3.connected.trianglepath.dotted",
+                                tint: TracesTheme.warning
+                            )
+                        }
+                    }
+
+                    HStack(spacing: 5) {
+                        Image(systemName: "clock")
+                            .font(.caption2)
+                        Text(dateRange(event))
+                            .lineLimit(1)
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+
+                    if !compact && !event.location.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "location")
+                                .font(.caption2)
+                            Text(event.location)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
             }
         }
-        .padding(.vertical, 5)
+        .padding(10)
     }
 }
 
