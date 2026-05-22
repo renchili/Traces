@@ -7,12 +7,6 @@ import MapKit
 // conflict distance lines, and bridges MapKit selection back into SwiftUI state.
 
 /// Header/container for the map area in the center split panel.
-///
-/// Controlled view area:
-/// - map title
-/// - selected coordinate/candidate count summary
-/// - explicit “show all events” action
-/// - embedded `EventMapView`
 struct EventMapPanel: View {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
@@ -26,28 +20,24 @@ struct EventMapPanel: View {
         events.filter { $0.lat != nil && $0.lon != nil }.count
     }
 
+    private var subtitle: String {
+        if let selectedEvent, !selectedEvent.suppressedCandidates.isEmpty {
+            return "\(selectedEvent.suppressedCandidates.count + 1) candidates · choose A/B/C on map"
+        }
+
+        if let selectedEvent, let lat = selectedEvent.lat, let lon = selectedEvent.lon {
+            return String(format: "Selected · %.5f, %.5f", lat, lon)
+        }
+
+        return "All events · \(eventCountWithCoordinates) with coordinates"
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                Text("Map")
-                    .font(.headline)
-
-                Spacer()
-
-                if let selectedEvent, !selectedEvent.suppressedCandidates.isEmpty {
-                    Text("\(selectedEvent.suppressedCandidates.count + 1) candidates · click A/B/C")
-                        .font(.caption.bold())
-                        .foregroundStyle(.orange)
-                } else if let selectedEvent, let lat = selectedEvent.lat, let lon = selectedEvent.lon {
-                    Text(String(format: "%.5f, %.5f", lat, lon))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("All events · \(eventCountWithCoordinates) with coordinates")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
+        TracesPanel(
+            title: "Map",
+            subtitle: subtitle,
+            systemImage: selectedEvent == nil ? "map" : "mappin.and.ellipse",
+            trailing: AnyView(
                 Button {
                     selectedEventID = nil
                     selectedConflictCandidateID = nil
@@ -55,32 +45,29 @@ struct EventMapPanel: View {
                     Label("Show All", systemImage: "map")
                         .labelStyle(.titleAndIcon)
                 }
-                .font(.caption)
-                .buttonStyle(.bordered)
+                .buttonStyle(TracesIconButtonStyle())
                 .disabled(selectedEventID == nil)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-
-            Divider()
-
+            )
+        ) {
             EventMapView(
                 events: events,
                 selectedEventID: $selectedEventID,
                 selectedConflictCandidateID: $selectedConflictCandidateID
             )
+            .overlay(alignment: .bottomLeading) {
+                HStack(spacing: 8) {
+                    TracesBadge(selectedEvent == nil ? "Overview" : "Focused", systemImage: "scope", tint: .accentColor)
+                    if let selectedEvent, !selectedEvent.suppressedCandidates.isEmpty {
+                        TracesBadge("Conflict candidates", systemImage: "exclamationmark.triangle.fill", tint: TracesTheme.warning)
+                    }
+                }
+                .padding(12)
+            }
         }
-        .background(.background)
     }
 }
 
 /// AppKit MapKit bridge used by SwiftUI.
-///
-/// Responsibilities:
-/// - render all event coordinates when no event is selected
-/// - render only A/B/C candidates when one event is selected
-/// - draw polylines from A to suppressed candidates
-/// - update selected event/candidate when the user clicks a map marker
 struct EventMapView: NSViewRepresentable {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
@@ -102,14 +89,8 @@ struct EventMapView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: MKMapView, context: Context) {
-        // Keep the coordinator bound to the latest SwiftUI bindings. This matters
-        // because SwiftUI may recreate bindings while reusing the NSView.
         context.coordinator.selectedEventID = $selectedEventID
         context.coordinator.selectedConflictCandidateID = $selectedConflictCandidateID
-
-        // Programmatic annotation selection during updateNSView triggers MapKit
-        // delegate callbacks. Guard those callbacks so we do not publish SwiftUI
-        // state changes during a view update.
         context.coordinator.isApplyingSwiftUIUpdate = true
 
         nsView.removeAnnotations(nsView.annotations)
@@ -149,8 +130,6 @@ struct EventMapView: NSViewRepresentable {
                     animated: true
                 )
             } else {
-                // When there are conflict candidates, keep all candidates visible
-                // instead of zooming into only the selected marker.
                 nsView.showAnnotations(annotations, animated: true)
             }
 
@@ -173,7 +152,6 @@ struct EventMapView: NSViewRepresentable {
         }
     }
 
-    /// Creates annotations for every visible event when no specific event is selected.
     private func allEventAnnotations() -> [TracesMapAnnotation] {
         events.compactMap { event in
             guard let lat = event.lat, let lon = event.lon else {
@@ -191,12 +169,10 @@ struct EventMapView: NSViewRepresentable {
         }
     }
 
-    /// Creates A/B/C annotations for the selected event and its suppressed candidates.
     private func selectedEventAnnotations(for event: ICSEvent) -> [TracesMapAnnotation] {
         let currentSelection = selectedConflictCandidateID ?? primaryCandidateID
         var annotations: [TracesMapAnnotation] = []
 
-        // A represents the current final event itself.
         if let lat = event.lat, let lon = event.lon {
             annotations.append(
                 TracesMapAnnotation(
@@ -210,7 +186,6 @@ struct EventMapView: NSViewRepresentable {
             )
         }
 
-        // B/C/etc are alternate suppressed candidates kept for user review.
         for (index, candidate) in event.suppressedCandidates.enumerated() {
             guard let lat = candidate.lat, let lon = candidate.lon else {
                 continue
@@ -234,8 +209,6 @@ struct EventMapView: NSViewRepresentable {
         return annotations
     }
 
-    /// Draws lines from the current final event A to each suppressed candidate.
-    /// The selected candidate line is marked via `title` for renderer styling.
     private func conflictOverlays(for event: ICSEvent) -> [MKPolyline] {
         guard let lat = event.lat, let lon = event.lon else {
             return []
@@ -276,7 +249,6 @@ struct EventMapView: NSViewRepresentable {
         return "Overlapping candidate"
     }
 
-    /// MapKit delegate object. Handles user-driven marker selection and polyline styling.
     final class Coordinator: NSObject, MKMapViewDelegate {
         var selectedEventID: Binding<String?>
         var selectedConflictCandidateID: Binding<String?>
@@ -299,7 +271,6 @@ struct EventMapView: NSViewRepresentable {
                 return
             }
 
-            // User clicks are safe to bridge back to SwiftUI asynchronously.
             DispatchQueue.main.async {
                 if self.selectedEventID.wrappedValue == nil {
                     self.selectedEventID.wrappedValue = annotation.eventID
@@ -334,10 +305,6 @@ struct EventMapView: NSViewRepresentable {
     }
 }
 
-/// Single annotation model used by Traces maps.
-///
-/// Do not reintroduce a generic `EventAnnotation` type; that caused duplicate
-/// type lookup problems when EventViews.swift previously contained map code.
 final class TracesMapAnnotation: NSObject, MKAnnotation {
     let eventID: String
     let candidateID: String
