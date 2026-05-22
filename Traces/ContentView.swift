@@ -16,19 +16,26 @@ struct ContentView: View {
     var body: some View {
         HSplitView {
             leftEventList
-                .frame(minWidth: 240, idealWidth: 340, maxWidth: 480)
+                .frame(minWidth: 280, idealWidth: 360, maxWidth: 520)
                 .frame(maxHeight: .infinity, alignment: .top)
 
             middleMapAndDetail
-                .frame(minWidth: 460, idealWidth: 760)
+                .frame(minWidth: 500, idealWidth: 780)
                 .frame(maxHeight: .infinity, alignment: .top)
 
             rightTimelineWaterfall
-                .frame(minWidth: 240, idealWidth: 320, maxWidth: 460)
+                .frame(minWidth: 260, idealWidth: 340, maxWidth: 480)
                 .frame(maxHeight: .infinity, alignment: .top)
         }
-        .frame(minWidth: 1100, minHeight: 680)
-        .background(.background)
+        .padding(14)
+        .frame(minWidth: 1120, minHeight: 700)
+        .background(
+            LinearGradient(
+                colors: [TracesTheme.appBackground, Color.accentColor.opacity(0.035)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
         .onAppear {
             viewModel.onAppear()
         }
@@ -66,83 +73,68 @@ struct ContentView: View {
     }
 
     private var leftEventList: some View {
-        VStack(spacing: 0) {
-            toolbar
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+        TracesPanel(
+            title: "Events",
+            subtitle: "\(viewModel.filteredEvents.count) shown · \(viewModel.events.count) total",
+            systemImage: "list.bullet.rectangle"
+        ) {
+            VStack(spacing: 12) {
+                toolbar
 
-            TextField("Search events", text: $viewModel.query)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-
-            if viewModel.isGenerating {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(.bottom, 6)
-            }
-
-            if !viewModel.status.isEmpty {
-                Text(viewModel.status)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
-            }
-
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(viewModel.filteredEvents) { event in
-                        EventRow(event: event, compact: false)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.18) : Color.clear)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.55) : Color.clear, lineWidth: 1)
-                            )
-                            .padding(.horizontal, 8)
-                            .onTapGesture {
-                                if viewModel.selectedEventID == event.id {
-                                    viewModel.selectedEventID = nil
-                                } else {
-                                    viewModel.selectedEventID = event.id
-                                }
-                                viewModel.didSelectEventChanged()
-                            }
-                    }
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search events, locations, resolver notes", text: $viewModel.query)
+                        .textFieldStyle(.plain)
                 }
-                .padding(.vertical, 4)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(TracesTheme.softBorder, lineWidth: 1))
+
+                TracesStatusBanner(status: viewModel.status, isLoading: viewModel.isGenerating)
+
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(viewModel.filteredEvents) { event in
+                            EventRow(event: event, compact: false)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .background(
+                                    RoundedRectangle(cornerRadius: TracesTheme.cardCornerRadius)
+                                        .fill(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.035))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: TracesTheme.cardCornerRadius)
+                                        .stroke(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.60) : TracesTheme.softBorder, lineWidth: 1)
+                                )
+                                .shadow(color: Color.black.opacity(event.id == viewModel.selectedEventID ? 0.07 : 0.025), radius: 8, x: 0, y: 4)
+                                .onTapGesture {
+                                    if viewModel.selectedEventID == event.id {
+                                        viewModel.selectedEventID = nil
+                                    } else {
+                                        viewModel.selectedEventID = event.id
+                                    }
+                                    viewModel.didSelectEventChanged()
+                                }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                HStack(spacing: 8) {
+                    TracesBadge("\(viewModel.filteredEvents.count) events", systemImage: "calendar", tint: .accentColor)
+                    Spacer(minLength: 8)
+                    Text(viewModel.fileName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-
-            HStack(spacing: 8) {
-                Text("\(viewModel.filteredEvents.count) events")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: true, vertical: false)
-
-                Spacer(minLength: 8)
-
-                Text(viewModel.fileName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(12)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.background)
     }
 
     private var toolbar: some View {
@@ -165,7 +157,7 @@ struct ContentView: View {
             } label: {
                 Label("Open", systemImage: "folder")
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(TracesIconButtonStyle())
 
             Button {
                 viewModel.showingGeneratorSettings.toggle()
@@ -173,7 +165,7 @@ struct ContentView: View {
                 Label("Settings", systemImage: "slider.horizontal.3")
                     .labelStyle(.iconOnly)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(TracesIconButtonStyle())
             .popover(isPresented: $viewModel.showingGeneratorSettings, arrowEdge: .bottom) {
                 TimelineGeneratorSettingsView(
                     googleAPIKey: Binding(
@@ -204,10 +196,10 @@ struct ContentView: View {
                 isShowingICSExporter = true
             } label: {
                 Label("Export ICS", systemImage: "calendar.badge.plus")
-                    .labelStyle(.iconOnly)
+                    .labelStyle(.titleAndIcon)
             }
             .help("Export ICS")
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(TracesIconButtonStyle(prominent: true))
             .disabled(viewModel.events.isEmpty)
         }
     }
@@ -219,32 +211,38 @@ struct ContentView: View {
                 selectedEventID: $viewModel.selectedEventID,
                 selectedConflictCandidateID: $viewModel.selectedConflictCandidateID
             )
-            .frame(minHeight: 260, idealHeight: 380)
+            .frame(minHeight: 280, idealHeight: 400)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-            Group {
-                if let selectedEvent = viewModel.selectedEvent {
-                    EventDetailView(
-                        event: selectedEvent,
-                        selectedConflictCandidateID: $viewModel.selectedConflictCandidateID,
-                        onPromoteConflictCandidate: {
-                            viewModel.promoteSelectedConflictCandidate()
-                        }
-                    )
-                } else {
-                    ContentUnavailableView(
-                        "No event selected",
-                        systemImage: "doc.text.magnifyingglass",
-                        description: Text("Select an event from the left list, timeline, or map.")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            TracesPanel(
+                title: viewModel.selectedEvent?.summary ?? "Event Detail",
+                subtitle: viewModel.selectedEvent.map(dateRange),
+                systemImage: "doc.text.magnifyingglass"
+            ) {
+                Group {
+                    if let selectedEvent = viewModel.selectedEvent {
+                        EventDetailView(
+                            event: selectedEvent,
+                            selectedConflictCandidateID: $viewModel.selectedConflictCandidateID,
+                            onPromoteConflictCandidate: {
+                                viewModel.promoteSelectedConflictCandidate()
+                            }
+                        )
+                    } else {
+                        ContentUnavailableView(
+                            "No event selected",
+                            systemImage: "doc.text.magnifyingglass",
+                            description: Text("Select an event from the left list, timeline, or map.")
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
+                .frame(minHeight: 260)
             }
-            .frame(minHeight: 260)
+            .frame(minHeight: 280)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.background)
     }
 
     private var rightTimelineWaterfall: some View {
@@ -253,6 +251,5 @@ struct ContentView: View {
             selectedEventID: $viewModel.selectedEventID
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(.background)
     }
 }
