@@ -21,6 +21,11 @@ final class TracesViewModel: ObservableObject {
     @Published var showingGeneratorSettings = false
     @Published var cacheCount: Int = 0
 
+    // Export defaults to the most recent import batch. Historical events stay visible
+    // in the app, but are not exported again unless the user explicitly enables full export.
+    @Published var exportFullHistory = false
+    @Published private(set) var latestImportEventIDs: Set<String> = []
+
     var googleAPIKey: String {
         get { UserDefaults.standard.string(forKey: "traces.googleAPIKey") ?? "" }
         set {
@@ -66,7 +71,7 @@ final class TracesViewModel: ObservableObject {
         events.first { $0.id == selectedEventID }
     }
 
-    // Raw filtered events keep the underlying chronological order for map/timeline/export logic.
+    // Raw filtered events keep the underlying chronological order for map/timeline logic.
     var filteredEvents: [ICSEvent] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return events }
@@ -90,6 +95,29 @@ final class TracesViewModel: ObservableObject {
 
             return lhsDate > rhsDate
         }
+    }
+
+    // Actual event list used by export.
+    // Default: newest import batch only. Full export: all events in the workspace.
+    var exportEvents: [ICSEvent] {
+        if exportFullHistory || latestImportEventIDs.isEmpty {
+            return events
+        }
+
+        let scoped = events.filter { latestImportEventIDs.contains($0.id) }
+        return scoped.isEmpty ? events : scoped
+    }
+
+    var exportScopeDescription: String {
+        if exportFullHistory {
+            return "Full export · \(events.count) events"
+        }
+
+        if latestImportEventIDs.isEmpty {
+            return "Export all · \(events.count) events"
+        }
+
+        return "Latest import only · \(exportEvents.count) events"
     }
 
     func onAppear() {
@@ -116,8 +144,11 @@ final class TracesViewModel: ObservableObject {
         let promoted = promote(candidate: candidate, in: oldEvent)
 
         events[eventIndex] = promoted
+        if latestImportEventIDs.remove(oldEvent.id) != nil {
+            latestImportEventIDs.insert(promoted.id)
+        }
         self.selectedConflictCandidateID = nil
-        generatedICS = ICSWriter.makeICS(events: events)
+        generatedICS = ICSWriter.makeICS(events: exportEvents)
         status = "Replaced final event location with \(candidate.title)."
         saveCurrentSession()
     }
@@ -319,15 +350,18 @@ final class TracesViewModel: ObservableObject {
             let parsed = ICSParser.parse(text)
 
             events = parsed
-            generatedICS = text
+            latestImportEventIDs = Set(parsed.map(\.id))
+            exportFullHistory = false
+            generatedICS = ICSWriter.makeICS(events: parsed)
             selectedEventID = parsed.first?.id
             selectedConflictCandidateID = nil
             fileName = url.lastPathComponent
-            status = "Loaded \(parsed.count) events from ICS preview."
+            status = "Loaded \(parsed.count) events from ICS preview. Export scope: latest loaded file."
 
             saveCurrentSession()
         } catch {
             events = []
+            latestImportEventIDs = []
             generatedICS = ""
             selectedEventID = nil
             selectedConflictCandidateID = nil
@@ -366,7 +400,9 @@ final class TracesViewModel: ObservableObject {
                 )
 
                 let cacheCount = await LocationCacheStore.shared.count()
-                let icsText = ICSWriter.makeICS(events: mergeResult.events)
+                let importedIDs = Set(importedEvents.map(\.id))
+                let exportScopedEvents = mergeResult.events.filter { importedIDs.contains($0.id) }
+                let icsText = ICSWriter.makeICS(events: exportScopedEvents.isEmpty ? importedEvents : exportScopedEvents)
                 let newestImportedEventID = importedEvents.max { lhs, rhs in
                     let lhsDate = lhs.start ?? lhs.end ?? .distantPast
                     let rhsDate = rhs.start ?? rhs.end ?? .distantPast
@@ -375,6 +411,8 @@ final class TracesViewModel: ObservableObject {
 
                 await MainActor.run {
                     self.events = mergeResult.events
+                    self.latestImportEventIDs = importedIDs
+                    self.exportFullHistory = false
                     self.generatedICS = icsText
 
                     if let newestImportedEventID,
@@ -389,7 +427,7 @@ final class TracesViewModel: ObservableObject {
 
                     self.fileName = "Merged: \(fileName)"
                     self.cacheCount = cacheCount
-                    self.status = "Imported \(importedEvents.count). Added \(mergeResult.addedCount), updated \(mergeResult.updatedCount), total \(mergeResult.events.count). Cache: \(cacheCount)."
+                    self.status = "Imported \(importedEvents.count). Added \(mergeResult.addedCount), updated \(mergeResult.updatedCount), total \(mergeResult.events.count). Export scope: latest import only (\(self.exportEvents.count)). Cache: \(cacheCount)."
                     self.isGenerating = false
 
                     self.saveCurrentSession()
@@ -405,9 +443,7 @@ final class TracesViewModel: ObservableObject {
     }
 
     func currentICSText() -> String {
-        generatedICS.isEmpty
-            ? ICSWriter.makeICS(events: events)
-            : generatedICS
+        ICSWriter.makeICS(events: exportEvents)
     }
 
     func exportICS() {
@@ -429,9 +465,11 @@ final class TracesViewModel: ObservableObject {
                 self.fileName = session.fileName
                 self.generatedICS = session.generatedICS
                 self.cacheCount = cacheCount
+                self.latestImportEventIDs = []
+                self.exportFullHistory = false
 
                 if !session.events.isEmpty {
-                    self.status = "Restored \(session.events.count) events from last session."
+                    self.status = "Restored \(session.events.count) events from last session. Export scope defaults to all restored events until a new import."
                 }
             }
         }
@@ -453,6 +491,8 @@ final class TracesViewModel: ObservableObject {
 
     func clearLastSession() {
         events = []
+        latestImportEventIDs = []
+        exportFullHistory = false
         selectedEventID = nil
         selectedConflictCandidateID = nil
         fileName = "Open .ics or Timeline JSON"
