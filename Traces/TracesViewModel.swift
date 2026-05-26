@@ -29,17 +29,6 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    var exportFilePath: String {
-        get {
-            UserDefaults.standard.string(forKey: "traces.exportFilePath")
-                ?? "~/Downloads/Traces/timeline-preview.ics"
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "traces.exportFilePath")
-            objectWillChange.send()
-        }
-    }
-
     var lastDays: Int {
         get {
             let value = UserDefaults.standard.integer(forKey: "traces.lastDays")
@@ -77,6 +66,7 @@ final class TracesViewModel: ObservableObject {
         events.first { $0.id == selectedEventID }
     }
 
+    // Raw filtered events keep the underlying chronological order for map/timeline/export logic.
     var filteredEvents: [ICSEvent] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return events }
@@ -85,6 +75,20 @@ final class TracesViewModel: ObservableObject {
             $0.summary.lowercased().contains(q)
             || $0.location.lowercased().contains(q)
             || $0.description.lowercased().contains(q)
+        }
+    }
+
+    // Sidebar display order is newest first so newly imported Timeline JSON is immediately visible.
+    var displayEvents: [ICSEvent] {
+        filteredEvents.sorted { lhs, rhs in
+            let lhsDate = lhs.start ?? lhs.end ?? .distantPast
+            let rhsDate = rhs.start ?? rhs.end ?? .distantPast
+
+            if lhsDate == rhsDate {
+                return lhs.summary.localizedCaseInsensitiveCompare(rhs.summary) == .orderedAscending
+            }
+
+            return lhsDate > rhsDate
         }
     }
 
@@ -363,14 +367,23 @@ final class TracesViewModel: ObservableObject {
 
                 let cacheCount = await LocationCacheStore.shared.count()
                 let icsText = ICSWriter.makeICS(events: mergeResult.events)
+                let newestImportedEventID = importedEvents.max { lhs, rhs in
+                    let lhsDate = lhs.start ?? lhs.end ?? .distantPast
+                    let rhsDate = rhs.start ?? rhs.end ?? .distantPast
+                    return lhsDate < rhsDate
+                }?.id
 
                 await MainActor.run {
                     self.events = mergeResult.events
                     self.generatedICS = icsText
 
-                    if self.selectedEventID == nil
+                    if let newestImportedEventID,
+                       mergeResult.events.contains(where: { $0.id == newestImportedEventID }) {
+                        self.selectedEventID = newestImportedEventID
+                        self.selectedConflictCandidateID = nil
+                    } else if self.selectedEventID == nil
                         || !mergeResult.events.contains(where: { $0.id == self.selectedEventID }) {
-                        self.selectedEventID = importedEvents.first?.id ?? mergeResult.events.first?.id
+                        self.selectedEventID = mergeResult.events.last?.id
                         self.selectedConflictCandidateID = nil
                     }
 
@@ -398,40 +411,7 @@ final class TracesViewModel: ObservableObject {
     }
 
     func exportICS() {
-        let trimmedPath = exportFilePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedPath.isEmpty else {
-            status = "Export failed: export path is empty."
-            return
-        }
-
-        var path = NSString(string: trimmedPath).expandingTildeInPath
-
-        if path.hasSuffix("/") {
-            path += "timeline-preview.ics"
-        }
-
-        if URL(fileURLWithPath: path).pathExtension.isEmpty {
-            path += ".ics"
-        }
-
-        let url = URL(fileURLWithPath: path)
-        let directory = url.deletingLastPathComponent()
-
-        do {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-
-            let icsText = currentICSText()
-            try icsText.write(to: url, atomically: true, encoding: .utf8)
-
-            generatedICS = icsText
-            exportFilePath = url.path
-            status = "Exported \(events.count) events to \(url.path)."
-        } catch {
-            status = "Export failed: \(error.localizedDescription). Path: \(url.path)"
-        }
+        generatedICS = currentICSText()
     }
 
     func restoreLastSession() {
