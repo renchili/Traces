@@ -13,6 +13,8 @@ final class TracesViewModel: ObservableObject {
     @Published var events: [ICSEvent] = []
     @Published var selectedEventID: String?
     @Published var selectedConflictCandidateID: String?
+    @Published var selectedPlaceFilterKey: String?
+    @Published var selectedPlaceFilterTitle: String?
     @Published var fileName: String = "Open .ics or Timeline JSON"
     @Published var query: String = ""
     @Published var status: String = ""
@@ -77,14 +79,28 @@ final class TracesViewModel: ObservableObject {
     }
 
     // Raw filtered events keep the underlying chronological order for map/timeline logic.
+    // Filtering combines the free-text search and the optional map-selected place filter.
     var filteredEvents: [ICSEvent] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return events }
 
-        return events.filter {
-            $0.summary.lowercased().contains(q)
-            || $0.location.lowercased().contains(q)
-            || $0.description.lowercased().contains(q)
+        return events.filter { event in
+            let matchesPlace: Bool
+            if let selectedPlaceFilterKey {
+                matchesPlace = Self.placeKey(for: event) == selectedPlaceFilterKey
+            } else {
+                matchesPlace = true
+            }
+
+            let matchesQuery: Bool
+            if q.isEmpty {
+                matchesQuery = true
+            } else {
+                matchesQuery = event.summary.lowercased().contains(q)
+                    || event.location.lowercased().contains(q)
+                    || event.description.lowercased().contains(q)
+            }
+
+            return matchesPlace && matchesQuery
         }
     }
 
@@ -120,6 +136,12 @@ final class TracesViewModel: ObservableObject {
         return "Selected export · \(selectedCount) events · \(unexportedCount) unexported"
     }
 
+    var placeFilterDescription: String? {
+        guard let selectedPlaceFilterKey else { return nil }
+        let title = selectedPlaceFilterTitle ?? selectedPlaceFilterKey
+        return "\(title) · \(eventsForPlaceKey(selectedPlaceFilterKey).count) visits"
+    }
+
     func onAppear() {
         restoreLastSession()
         refreshCacheCount()
@@ -128,6 +150,75 @@ final class TracesViewModel: ObservableObject {
     func didSelectEventChanged() {
         selectedConflictCandidateID = nil
         saveCurrentSession()
+    }
+
+    // MARK: - Place filter helpers
+
+    static func placeKey(for event: ICSEvent) -> String {
+        if let placeID = extractPlaceID(fromText: "\(event.url)\n\(event.description)\n\(event.location)") {
+            return "placeID:\(placeID)"
+        }
+
+        if let lat = event.lat, let lon = event.lon {
+            return String(format: "coord:%.5f,%.5f", lat, lon)
+        }
+
+        let normalizedLocation = event.location
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+
+        if !normalizedLocation.isEmpty {
+            return "location:\(normalizedLocation)"
+        }
+
+        return "title:\(event.summary.lowercased())"
+    }
+
+    static func placeTitle(for event: ICSEvent) -> String {
+        if !event.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return event.summary
+        }
+
+        if !event.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return event.location
+        }
+
+        return placeKey(for: event)
+    }
+
+    func selectPlaceFilter(eventID: String, placeKey: String, placeTitle: String) {
+        selectedPlaceFilterKey = placeKey
+        selectedPlaceFilterTitle = placeTitle
+
+        if let lastVisit = lastEventForPlaceKey(placeKey) {
+            selectedEventID = lastVisit.id
+        } else {
+            selectedEventID = eventID
+        }
+
+        selectedConflictCandidateID = nil
+        status = "Filtered by place: \(placeTitle). Showing \(filteredEvents.count) visits."
+        saveCurrentSession()
+    }
+
+    func clearPlaceFilter() {
+        selectedPlaceFilterKey = nil
+        selectedPlaceFilterTitle = nil
+        status = "Cleared place filter."
+        saveCurrentSession()
+    }
+
+    func eventsForPlaceKey(_ placeKey: String) -> [ICSEvent] {
+        events.filter { Self.placeKey(for: $0) == placeKey }
+    }
+
+    func lastEventForPlaceKey(_ placeKey: String) -> ICSEvent? {
+        eventsForPlaceKey(placeKey).max { lhs, rhs in
+            let lhsDate = lhs.start ?? lhs.end ?? .distantPast
+            let rhsDate = rhs.start ?? rhs.end ?? .distantPast
+            return lhsDate < rhsDate
+        }
     }
 
     // MARK: - Export selection helpers
@@ -217,6 +308,9 @@ final class TracesViewModel: ObservableObject {
         latestImportEventIDs.insert(promoted.id)
         selectedExportEventIDs.insert(promoted.id)
         exportedEventIDs.remove(promoted.id)
+        if let selectedPlaceFilterKey, Self.placeKey(for: promoted) != selectedPlaceFilterKey {
+            clearPlaceFilter()
+        }
         self.selectedConflictCandidateID = nil
         generatedICS = ICSWriter.makeICS(events: exportEvents)
         status = "Replaced final event location with \(candidate.title). Marked event as unexported."
@@ -338,10 +432,12 @@ final class TracesViewModel: ObservableObject {
     }
 
     private func extractPlaceID(from event: ICSEvent) -> String? {
-        let combined = "\(event.url)\n\(event.description)\n\(event.location)"
+        Self.extractPlaceID(fromText: "\(event.url)\n\(event.description)\n\(event.location)")
+    }
 
-        if let range = combined.range(of: "place_id:") {
-            let suffix = combined[range.upperBound...]
+    private static func extractPlaceID(fromText text: String) -> String? {
+        if let range = text.range(of: "place_id:") {
+            let suffix = text[range.upperBound...]
             let placeID = suffix.prefix { char in
                 char.isLetter || char.isNumber || char == "_" || char == "-"
             }
@@ -350,8 +446,8 @@ final class TracesViewModel: ObservableObject {
             return value.isEmpty ? nil : value
         }
 
-        if let range = combined.range(of: "Place ID:") {
-            let suffix = combined[range.upperBound...]
+        if let range = text.range(of: "Place ID:") {
+            let suffix = text[range.upperBound...]
             let trimmed = suffix.trimmingCharacters(in: .whitespacesAndNewlines)
             let placeID = trimmed.prefix { char in
                 char.isLetter || char.isNumber || char == "_" || char == "-"
@@ -424,6 +520,8 @@ final class TracesViewModel: ObservableObject {
             latestImportEventIDs = parsedIDs
             newlyAddedEventIDs = parsedIDs
             selectedExportEventIDs = parsedIDs
+            selectedPlaceFilterKey = nil
+            selectedPlaceFilterTitle = nil
             generatedICS = ICSWriter.makeICS(events: parsed)
             selectedEventID = parsed.first?.id
             selectedConflictCandidateID = nil
@@ -436,6 +534,8 @@ final class TracesViewModel: ObservableObject {
             latestImportEventIDs = []
             newlyAddedEventIDs = []
             selectedExportEventIDs = []
+            selectedPlaceFilterKey = nil
+            selectedPlaceFilterTitle = nil
             generatedICS = ""
             selectedEventID = nil
             selectedConflictCandidateID = nil
@@ -492,6 +592,8 @@ final class TracesViewModel: ObservableObject {
                     self.newlyAddedEventIDs = newlyAddedIDs
                     self.selectedExportEventIDs = importedIDs
                     self.exportedEventIDs.subtract(importedIDs)
+                    self.selectedPlaceFilterKey = nil
+                    self.selectedPlaceFilterTitle = nil
                     self.generatedICS = icsText
 
                     if let newestImportedEventID,
@@ -541,6 +643,8 @@ final class TracesViewModel: ObservableObject {
                 self.events = session.events
                 self.selectedEventID = session.selectedEventID
                 self.selectedConflictCandidateID = nil
+                self.selectedPlaceFilterKey = nil
+                self.selectedPlaceFilterTitle = nil
                 self.fileName = session.fileName
                 self.generatedICS = session.generatedICS
                 self.cacheCount = cacheCount
@@ -582,6 +686,8 @@ final class TracesViewModel: ObservableObject {
         newlyAddedEventIDs = []
         exportedEventIDs = []
         selectedExportEventIDs = []
+        selectedPlaceFilterKey = nil
+        selectedPlaceFilterTitle = nil
         selectedEventID = nil
         selectedConflictCandidateID = nil
         fileName = "Open .ics or Timeline JSON"
