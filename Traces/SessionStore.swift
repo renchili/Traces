@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Last working session persistence
 // Stores the user's current working set so restarting the app does not lose
-// imported events, selected event, generated ICS text, or file context.
+// imported events, selected event, generated ICS text, file context, or export state.
 
 /// Snapshot of the app state that should be restored on next launch.
 struct TracesSession: Sendable {
@@ -11,6 +11,10 @@ struct TracesSession: Sendable {
     let fileName: String
     let generatedICS: String
     let savedAt: Date
+    let latestImportEventIDs: Set<String>
+    let newlyAddedEventIDs: Set<String>
+    let exportedEventIDs: Set<String>
+    let selectedExportEventIDs: Set<String>
 }
 
 /// Actor-backed local session store.
@@ -22,16 +26,25 @@ actor SessionStore {
     static let shared = SessionStore()
 
     // Versioned key. Bump when persisted schema becomes incompatible.
-    private let defaultsKey = "traces.lastSession.v3"
+    private let defaultsKey = "traces.lastSession.v4"
 
     private init() {}
 
     /// Loads the last session, returning nil when no session exists or decoding fails.
     func load() -> TracesSession? {
         guard let data = UserDefaults.standard.data(forKey: defaultsKey) else {
-            return nil
+            // Backward compatibility with the previous session schema. Old sessions
+            // did not store export tracking, so export state is reconstructed empty.
+            guard let legacyData = UserDefaults.standard.data(forKey: "traces.lastSession.v3") else {
+                return nil
+            }
+            return Self.decodeData(legacyData)
         }
 
+        return Self.decodeData(data)
+    }
+
+    private static func decodeData(_ data: Data) -> TracesSession? {
         do {
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return nil
@@ -58,6 +71,7 @@ actor SessionStore {
     /// Clears the last working session. This does not clear the location cache.
     func clear() {
         UserDefaults.standard.removeObject(forKey: defaultsKey)
+        UserDefaults.standard.removeObject(forKey: "traces.lastSession.v3")
     }
 
     /// Serializes a session into a JSON-compatible dictionary.
@@ -67,7 +81,11 @@ actor SessionStore {
             "selectedEventID": session.selectedEventID as Any,
             "fileName": session.fileName,
             "generatedICS": session.generatedICS,
-            "savedAt": session.savedAt.timeIntervalSince1970
+            "savedAt": session.savedAt.timeIntervalSince1970,
+            "latestImportEventIDs": Array(session.latestImportEventIDs),
+            "newlyAddedEventIDs": Array(session.newlyAddedEventIDs),
+            "exportedEventIDs": Array(session.exportedEventIDs),
+            "selectedExportEventIDs": Array(session.selectedExportEventIDs)
         ]
     }
 
@@ -84,7 +102,6 @@ actor SessionStore {
 
         let selectedEventID = object["selectedEventID"] as? String
         let savedAtTimestamp = object["savedAt"] as? Double ?? Date().timeIntervalSince1970
-
         let events = eventObjects.compactMap { decodeEvent($0) }
 
         return TracesSession(
@@ -92,7 +109,11 @@ actor SessionStore {
             selectedEventID: selectedEventID,
             fileName: fileName,
             generatedICS: generatedICS,
-            savedAt: Date(timeIntervalSince1970: savedAtTimestamp)
+            savedAt: Date(timeIntervalSince1970: savedAtTimestamp),
+            latestImportEventIDs: Set(object["latestImportEventIDs"] as? [String] ?? []),
+            newlyAddedEventIDs: Set(object["newlyAddedEventIDs"] as? [String] ?? []),
+            exportedEventIDs: Set(object["exportedEventIDs"] as? [String] ?? []),
+            selectedExportEventIDs: Set(object["selectedExportEventIDs"] as? [String] ?? [])
         )
     }
 
