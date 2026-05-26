@@ -16,7 +16,7 @@ struct ContentView: View {
     var body: some View {
         HSplitView {
             leftEventList
-                .frame(minWidth: 280, idealWidth: 360, maxWidth: 520)
+                .frame(minWidth: 320, idealWidth: 400, maxWidth: 560)
                 .frame(maxHeight: .infinity, alignment: .top)
 
             middleMapAndDetail
@@ -28,7 +28,7 @@ struct ContentView: View {
                 .frame(maxHeight: .infinity, alignment: .top)
         }
         .padding(14)
-        .frame(minWidth: 1120, minHeight: 700)
+        .frame(minWidth: 1180, minHeight: 720)
         .background(
             LinearGradient(
                 colors: [TracesTheme.appBackground, Color.accentColor.opacity(0.035)],
@@ -43,11 +43,12 @@ struct ContentView: View {
             isPresented: $isShowingICSExporter,
             document: exportDocument,
             contentType: UTType(filenameExtension: "ics") ?? .data,
-            defaultFilename: viewModel.exportFullHistory ? "traces-full-export.ics" : "traces-latest-import.ics"
+            defaultFilename: viewModel.exportEvents.count == viewModel.events.count ? "traces-full-export.ics" : "traces-selected-export.ics"
         ) { result in
             switch result {
             case let .success(url):
-                viewModel.status = "Exported \(viewModel.exportEvents.count) events to \(url.lastPathComponent)."
+                viewModel.markCurrentExported()
+                viewModel.status = "Exported \(viewModel.exportEvents.count) selected events to \(url.lastPathComponent)."
             case let .failure(error):
                 viewModel.status = "Export failed: \(error.localizedDescription)"
             }
@@ -81,6 +82,7 @@ struct ContentView: View {
             VStack(spacing: 12) {
                 toolbar
                 exportScopeBar
+                exportSelectionActions
 
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -98,26 +100,7 @@ struct ContentView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(viewModel.displayEvents) { event in
-                            EventRow(event: event, compact: false)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                                .background(
-                                    RoundedRectangle(cornerRadius: TracesTheme.cardCornerRadius)
-                                        .fill(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.035))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: TracesTheme.cardCornerRadius)
-                                        .stroke(event.id == viewModel.selectedEventID ? Color.accentColor.opacity(0.60) : TracesTheme.softBorder, lineWidth: 1)
-                                )
-                                .shadow(color: Color.black.opacity(event.id == viewModel.selectedEventID ? 0.07 : 0.025), radius: 8, x: 0, y: 4)
-                                .onTapGesture {
-                                    if viewModel.selectedEventID == event.id {
-                                        viewModel.selectedEventID = nil
-                                    } else {
-                                        viewModel.selectedEventID = event.id
-                                    }
-                                    viewModel.didSelectEventChanged()
-                                }
+                            exportableEventRow(event)
                         }
                     }
                     .padding(.vertical, 2)
@@ -126,6 +109,7 @@ struct ContentView: View {
 
                 HStack(spacing: 8) {
                     TracesBadge("\(viewModel.displayEvents.count) events", systemImage: "calendar", tint: .accentColor)
+                    TracesBadge("\(viewModel.exportEvents.count) selected", systemImage: "checkmark.circle", tint: viewModel.exportEvents.isEmpty ? .secondary : .green)
                     Spacer(minLength: 8)
                     Text(viewModel.fileName)
                         .font(.caption)
@@ -136,6 +120,105 @@ struct ContentView: View {
             }
             .padding(12)
         }
+    }
+
+    private func exportableEventRow(_ event: ICSEvent) -> some View {
+        let isSelectedForExport = viewModel.isSelectedForExport(event)
+        let isSelectedEvent = event.id == viewModel.selectedEventID
+        let isNew = viewModel.isNewlyAdded(event)
+        let isLatest = viewModel.isLatestImport(event)
+        let isUnexported = viewModel.isUnexported(event)
+
+        return HStack(alignment: .top, spacing: 8) {
+            Button {
+                viewModel.toggleExportSelection(event.id)
+            } label: {
+                Image(systemName: isSelectedForExport ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(isSelectedForExport ? Color.accentColor : Color.secondary)
+                    .frame(width: 24, height: 30)
+            }
+            .buttonStyle(.plain)
+            .help(isSelectedForExport ? "Remove from export" : "Add to export")
+
+            VStack(alignment: .leading, spacing: 6) {
+                EventRow(event: event, compact: false)
+
+                HStack(spacing: 6) {
+                    if isNew {
+                        TracesBadge("NEW", systemImage: "sparkles", tint: .green)
+                    }
+
+                    if isLatest && !isNew {
+                        TracesBadge("LATEST IMPORT", systemImage: "tray.and.arrow.down", tint: .accentColor)
+                    }
+
+                    if isUnexported {
+                        TracesBadge("UNEXPORTED", systemImage: "exclamationmark.circle.fill", tint: TracesTheme.warning)
+                    } else {
+                        TracesBadge("EXPORTED", systemImage: "checkmark.seal.fill", tint: .secondary)
+                    }
+
+                    if isSelectedForExport {
+                        TracesBadge("SELECTED", systemImage: "checkmark.circle.fill", tint: .blue)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, 8)
+        .background(
+            RoundedRectangle(cornerRadius: TracesTheme.cardCornerRadius)
+                .fill(rowBackground(isSelectedEvent: isSelectedEvent, isSelectedForExport: isSelectedForExport, isUnexported: isUnexported))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: TracesTheme.cardCornerRadius)
+                .stroke(rowBorder(isSelectedEvent: isSelectedEvent, isSelectedForExport: isSelectedForExport, isUnexported: isUnexported), lineWidth: isSelectedForExport || isUnexported ? 1.4 : 1)
+        )
+        .shadow(color: Color.black.opacity(isSelectedEvent ? 0.07 : 0.025), radius: 8, x: 0, y: 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if viewModel.selectedEventID == event.id {
+                viewModel.selectedEventID = nil
+            } else {
+                viewModel.selectedEventID = event.id
+            }
+            viewModel.didSelectEventChanged()
+        }
+    }
+
+    private func rowBackground(isSelectedEvent: Bool, isSelectedForExport: Bool, isUnexported: Bool) -> Color {
+        if isSelectedEvent {
+            return Color.accentColor.opacity(0.14)
+        }
+
+        if isSelectedForExport {
+            return Color.green.opacity(0.075)
+        }
+
+        if isUnexported {
+            return TracesTheme.warning.opacity(0.075)
+        }
+
+        return Color.primary.opacity(0.035)
+    }
+
+    private func rowBorder(isSelectedEvent: Bool, isSelectedForExport: Bool, isUnexported: Bool) -> Color {
+        if isSelectedEvent {
+            return Color.accentColor.opacity(0.60)
+        }
+
+        if isSelectedForExport {
+            return Color.green.opacity(0.45)
+        }
+
+        if isUnexported {
+            return TracesTheme.warning.opacity(0.45)
+        }
+
+        return TracesTheme.softBorder
     }
 
     private var toolbar: some View {
@@ -209,21 +292,59 @@ struct ContentView: View {
         HStack(spacing: 8) {
             TracesBadge(
                 viewModel.exportScopeDescription,
-                systemImage: viewModel.exportFullHistory ? "tray.full" : "tray.and.arrow.up",
-                tint: viewModel.exportFullHistory ? TracesTheme.warning : Color.accentColor
+                systemImage: "tray.and.arrow.up",
+                tint: viewModel.exportEvents.isEmpty ? .secondary : Color.accentColor
             )
 
             Spacer(minLength: 6)
 
-            Toggle("Full export", isOn: $viewModel.exportFullHistory)
-                .toggleStyle(.switch)
-                .font(.caption)
-                .help("Off: export latest import only. On: export all visible historical events.")
+            Text("Click checkboxes or use quick select")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(TracesTheme.softBorder, lineWidth: 1))
+    }
+
+    private var exportSelectionActions: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Button("Latest") {
+                    viewModel.selectLatestImportForExport()
+                }
+                .buttonStyle(TracesIconButtonStyle())
+                .disabled(viewModel.latestImportEventIDs.isEmpty)
+
+                Button("Unexported") {
+                    viewModel.selectUnexportedForExport()
+                }
+                .buttonStyle(TracesIconButtonStyle())
+
+                Button("Filtered") {
+                    viewModel.selectFilteredEventsForExport()
+                }
+                .buttonStyle(TracesIconButtonStyle())
+                .disabled(viewModel.filteredEvents.isEmpty)
+            }
+
+            HStack(spacing: 8) {
+                Button("All") {
+                    viewModel.selectAllEventsForExport()
+                }
+                .buttonStyle(TracesIconButtonStyle())
+                .disabled(viewModel.events.isEmpty)
+
+                Button("Clear") {
+                    viewModel.clearExportSelection()
+                }
+                .buttonStyle(TracesIconButtonStyle())
+                .disabled(viewModel.selectedExportEventIDs.isEmpty)
+
+                Spacer(minLength: 0)
+            }
+        }
     }
 
     private var middleMapAndDetail: some View {
