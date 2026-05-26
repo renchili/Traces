@@ -83,6 +83,25 @@ struct ContentView: View {
                 compactToolbar
                 compactSearchRow
 
+                if let placeFilterDescription = viewModel.placeFilterDescription {
+                    HStack(spacing: 6) {
+                        TracesBadge(placeFilterDescription, systemImage: "mappin.and.ellipse", tint: .accentColor)
+                        Spacer(minLength: 4)
+                        Button {
+                            viewModel.clearPlaceFilter()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Clear place filter")
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(Color.accentColor.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.18), lineWidth: 1))
+                }
+
                 if viewModel.isGenerating || viewModel.status.lowercased().contains("failed") {
                     TracesStatusBanner(status: viewModel.status, isLoading: viewModel.isGenerating)
                 }
@@ -332,7 +351,19 @@ struct ContentView: View {
             EventMapPanel(
                 events: viewModel.filteredEvents,
                 selectedEventID: $viewModel.selectedEventID,
-                selectedConflictCandidateID: $viewModel.selectedConflictCandidateID
+                selectedConflictCandidateID: $viewModel.selectedConflictCandidateID,
+                selectedPlaceFilterKey: viewModel.selectedPlaceFilterKey,
+                selectedPlaceFilterTitle: viewModel.selectedPlaceFilterTitle,
+                onSelectPlace: { eventID, placeKey, placeTitle in
+                    viewModel.selectPlaceFilter(
+                        eventID: eventID,
+                        placeKey: placeKey,
+                        placeTitle: placeTitle
+                    )
+                },
+                onClearPlaceFilter: {
+                    viewModel.clearPlaceFilter()
+                }
             )
             .frame(minHeight: 280, idealHeight: 400)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
