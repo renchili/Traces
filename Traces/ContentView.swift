@@ -43,11 +43,11 @@ struct ContentView: View {
             isPresented: $isShowingICSExporter,
             document: exportDocument,
             contentType: UTType(filenameExtension: "ics") ?? .data,
-            defaultFilename: "timeline-preview.ics"
+            defaultFilename: viewModel.exportFullHistory ? "traces-full-export.ics" : "traces-latest-import.ics"
         ) { result in
             switch result {
             case let .success(url):
-                viewModel.status = "Exported \(viewModel.events.count) events to \(url.lastPathComponent)."
+                viewModel.status = "Exported \(viewModel.exportEvents.count) events to \(url.lastPathComponent)."
             case let .failure(error):
                 viewModel.status = "Export failed: \(error.localizedDescription)"
             }
@@ -75,11 +75,12 @@ struct ContentView: View {
     private var leftEventList: some View {
         TracesPanel(
             title: "Events",
-            subtitle: "\(viewModel.filteredEvents.count) shown · \(viewModel.events.count) total",
+            subtitle: "\(viewModel.displayEvents.count) shown · \(viewModel.events.count) total",
             systemImage: "list.bullet.rectangle"
         ) {
             VStack(spacing: 12) {
                 toolbar
+                exportScopeBar
 
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -96,7 +97,7 @@ struct ContentView: View {
 
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(viewModel.filteredEvents) { event in
+                        ForEach(viewModel.displayEvents) { event in
                             EventRow(event: event, compact: false)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .contentShape(Rectangle())
@@ -124,7 +125,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 HStack(spacing: 8) {
-                    TracesBadge("\(viewModel.filteredEvents.count) events", systemImage: "calendar", tint: .accentColor)
+                    TracesBadge("\(viewModel.displayEvents.count) events", systemImage: "calendar", tint: .accentColor)
                     Spacer(minLength: 8)
                     Text(viewModel.fileName)
                         .font(.caption)
@@ -198,10 +199,31 @@ struct ContentView: View {
                 Label("Export ICS", systemImage: "calendar.badge.plus")
                     .labelStyle(.titleAndIcon)
             }
-            .help("Export ICS")
+            .help(viewModel.exportScopeDescription)
             .buttonStyle(TracesIconButtonStyle(prominent: true))
-            .disabled(viewModel.events.isEmpty)
+            .disabled(viewModel.exportEvents.isEmpty)
         }
+    }
+
+    private var exportScopeBar: some View {
+        HStack(spacing: 8) {
+            TracesBadge(
+                viewModel.exportScopeDescription,
+                systemImage: viewModel.exportFullHistory ? "tray.full" : "tray.and.arrow.up",
+                tint: viewModel.exportFullHistory ? TracesTheme.warning : Color.accentColor
+            )
+
+            Spacer(minLength: 6)
+
+            Toggle("Full export", isOn: $viewModel.exportFullHistory)
+                .toggleStyle(.switch)
+                .font(.caption)
+                .help("Off: export latest import only. On: export all visible historical events.")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(TracesTheme.softBorder, lineWidth: 1))
     }
 
     private var middleMapAndDetail: some View {
