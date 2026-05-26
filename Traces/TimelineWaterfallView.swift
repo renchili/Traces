@@ -3,8 +3,7 @@ import Foundation
 
 // MARK: - Timeline waterfall
 // Owns the right-side time overview. This file renders timed events as vertical
-// blocks, handles overlap columns, and highlights the selected event. It does not
-// import data, resolve places, export ICS, or mutate event content.
+// blocks, handles overlap columns, date separators, and highlights the selected event.
 
 /// Right-side timeline panel shown in the main three-pane layout.
 struct TimelineWaterfallView: View {
@@ -31,15 +30,41 @@ struct TimelineWaterfallView: View {
         )
     }
 
+    private var dateRangeText: String {
+        guard let first = datedEvents.first?.start,
+              let last = datedEvents.compactMap(\.end).max()
+        else {
+            return "No dates"
+        }
+
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+
+        if Calendar.current.isDate(first, inSameDayAs: last) {
+            return formatter.string(from: first)
+        }
+
+        return "\(formatter.string(from: first)) → \(formatter.string(from: last))"
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let width = max(220, proxy.size.width)
             let widthBucket = Int(width.rounded())
 
             VStack(spacing: 0) {
-                HStack {
-                    Text("Timeline")
-                        .font(.headline)
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Timeline")
+                            .font(.headline)
+
+                        Text(dateRangeText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
 
                     Spacer()
 
@@ -110,7 +135,7 @@ struct TimelineCanvas: View {
     let availableWidth: CGFloat
 
     private let hourHeight: CGFloat = 52
-    private let labelWidth: CGFloat = 46
+    private let labelWidth: CGFloat = 54
     private let columnGap: CGFloat = 6
     private let contentLeftPadding: CGFloat = 8
     private let contentRightPadding: CGFloat = 8
@@ -135,11 +160,17 @@ struct TimelineCanvas: View {
         max(220, availableWidth)
     }
 
+    private var dayCount: Int {
+        guard let dayStart, let dayEnd else { return 1 }
+        return max(1, Calendar.current.dateComponents([.day], from: dayStart, to: dayEnd).day ?? 1)
+    }
+
     var body: some View {
         let layoutItems = makeLayoutItems()
 
         ZStack(alignment: .topLeading) {
             hourGrid(totalWidth: canvasWidth)
+            dateSeparators(totalWidth: canvasWidth)
 
             ForEach(layoutItems, id: \.id) { item in
                 if let rect = rectForEvent(item, totalWidth: canvasWidth) {
@@ -165,22 +196,48 @@ struct TimelineCanvas: View {
         .frame(width: canvasWidth, height: canvasHeight, alignment: .topLeading)
     }
 
+    private func dateSeparators(totalWidth: CGFloat) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(0..<dayCount, id: \.self) { dayOffset in
+                if let date = Calendar.current.date(byAdding: .day, value: dayOffset, to: dayStart ?? Date()) {
+                    let y = CGFloat(dayOffset * 24) * hourHeight
+
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.accentColor.opacity(0.12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 9)
+                                .stroke(Color.accentColor.opacity(0.20), lineWidth: 1)
+                        )
+                        .frame(width: max(120, totalWidth - labelWidth), height: 24)
+                        .position(x: labelWidth + (totalWidth - labelWidth) / 2, y: y + 12)
+
+                    Text(dayLabel(date))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                        .lineLimit(1)
+                        .position(x: labelWidth + 64, y: y + 12)
+                }
+            }
+        }
+    }
+
     private func hourGrid(totalWidth: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(0...Int(totalHours), id: \.self) { hour in
                 let y = CGFloat(hour) * hourHeight
+                let isDayStart = hour % 24 == 0
 
                 Path { path in
                     path.move(to: CGPoint(x: labelWidth, y: y))
                     path.addLine(to: CGPoint(x: totalWidth, y: y))
                 }
-                .stroke(.quaternary, lineWidth: 1)
+                .stroke(isDayStart ? Color.accentColor.opacity(0.35) : Color.secondary.opacity(0.18), lineWidth: isDayStart ? 1.3 : 1)
 
                 Text(hourLabel(hour))
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(width: labelWidth - 6, alignment: .trailing)
-                    .position(x: (labelWidth - 6) / 2, y: y + 7)
+                    .foregroundStyle(isDayStart ? Color.accentColor : .secondary)
+                    .frame(width: labelWidth - 8, alignment: .trailing)
+                    .position(x: (labelWidth - 8) / 2, y: y + 7)
             }
         }
     }
@@ -331,7 +388,13 @@ struct TimelineCanvas: View {
 
         let date = Calendar.current.date(byAdding: .hour, value: hourOffset, to: dayStart) ?? dayStart
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        formatter.dateFormat = hourOffset % 24 == 0 ? "MMM d" : "HH:mm"
+        return formatter.string(from: date)
+    }
+
+    private func dayLabel(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, d MMM yyyy"
         return formatter.string(from: date)
     }
 }
@@ -357,10 +420,10 @@ struct TimelineEventBlock: View {
                 }
             }
 
-            Text(shortTimeRange(event))
+            Text(shortDateTimeRange(event))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+                .lineLimit(2)
                 .truncationMode(.tail)
         }
         .padding(compact ? 5 : 7)
@@ -380,18 +443,27 @@ struct TimelineEventBlock: View {
         .clipped()
     }
 
-    private func shortTimeRange(_ event: ICSEvent) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+    private func shortDateTimeRange(_ event: ICSEvent) -> String {
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateFormat = "HH:mm"
+
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d"
 
         guard let start = event.start else {
             return "No time"
         }
 
+        let datePrefix = dateFormatter.string(from: start)
+
         if let end = event.end {
-            return "\(formatter.string(from: start)) → \(formatter.string(from: end))"
+            if Calendar.current.isDate(start, inSameDayAs: end) {
+                return "\(datePrefix) · \(timeFormatter.string(from: start)) → \(timeFormatter.string(from: end))"
+            }
+
+            return "\(datePrefix) \(timeFormatter.string(from: start)) → \(dateFormatter.string(from: end)) \(timeFormatter.string(from: end))"
         }
 
-        return formatter.string(from: start)
+        return "\(datePrefix) · \(timeFormatter.string(from: start))"
     }
 }
