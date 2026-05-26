@@ -11,6 +11,10 @@ struct EventMapPanel: View {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
     @Binding var selectedConflictCandidateID: String?
+    let selectedPlaceFilterKey: String?
+    let selectedPlaceFilterTitle: String?
+    let onSelectPlace: (String, String, String) -> Void
+    let onClearPlaceFilter: () -> Void
 
     private var selectedEvent: ICSEvent? {
         events.first { $0.id == selectedEventID }
@@ -21,6 +25,10 @@ struct EventMapPanel: View {
     }
 
     private var subtitle: String {
+        if let selectedPlaceFilterTitle {
+            return "Place filter · \(selectedPlaceFilterTitle)"
+        }
+
         if let selectedEvent, !selectedEvent.suppressedCandidates.isEmpty {
             return "\(selectedEvent.suppressedCandidates.count + 1) candidates · choose A/B/C on map"
         }
@@ -36,27 +44,40 @@ struct EventMapPanel: View {
         TracesPanel(
             title: "Map",
             subtitle: subtitle,
-            systemImage: selectedEvent == nil ? "map" : "mappin.and.ellipse",
+            systemImage: selectedPlaceFilterKey == nil ? "map" : "line.3.horizontal.decrease.circle",
             trailing: AnyView(
-                Button {
-                    selectedEventID = nil
-                    selectedConflictCandidateID = nil
-                } label: {
-                    Label("Show All", systemImage: "map")
-                        .labelStyle(.titleAndIcon)
+                HStack(spacing: 8) {
+                    if selectedPlaceFilterKey != nil {
+                        Button {
+                            onClearPlaceFilter()
+                        } label: {
+                            Label("Clear Place", systemImage: "xmark.circle")
+                                .labelStyle(.titleAndIcon)
+                        }
+                        .buttonStyle(TracesIconButtonStyle())
+                    }
+
+                    Button {
+                        selectedEventID = nil
+                        selectedConflictCandidateID = nil
+                    } label: {
+                        Label("Show All", systemImage: "map")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(TracesIconButtonStyle())
+                    .disabled(selectedEventID == nil && selectedPlaceFilterKey == nil)
                 }
-                .buttonStyle(TracesIconButtonStyle())
-                .disabled(selectedEventID == nil)
             )
         ) {
             EventMapView(
                 events: events,
                 selectedEventID: $selectedEventID,
-                selectedConflictCandidateID: $selectedConflictCandidateID
+                selectedConflictCandidateID: $selectedConflictCandidateID,
+                onSelectPlace: onSelectPlace
             )
             .overlay(alignment: .bottomLeading) {
                 HStack(spacing: 8) {
-                    TracesBadge(selectedEvent == nil ? "Overview" : "Focused", systemImage: "scope", tint: .accentColor)
+                    TracesBadge(selectedPlaceFilterKey == nil ? "Overview" : "Place filtered", systemImage: "scope", tint: .accentColor)
                     if let selectedEvent, !selectedEvent.suppressedCandidates.isEmpty {
                         TracesBadge("Conflict candidates", systemImage: "exclamationmark.triangle.fill", tint: TracesTheme.warning)
                     }
@@ -72,11 +93,13 @@ struct EventMapView: NSViewRepresentable {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
     @Binding var selectedConflictCandidateID: String?
+    let onSelectPlace: (String, String, String) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             selectedEventID: $selectedEventID,
-            selectedConflictCandidateID: $selectedConflictCandidateID
+            selectedConflictCandidateID: $selectedConflictCandidateID,
+            onSelectPlace: onSelectPlace
         )
     }
 
@@ -91,6 +114,7 @@ struct EventMapView: NSViewRepresentable {
     func updateNSView(_ nsView: MKMapView, context: Context) {
         context.coordinator.selectedEventID = $selectedEventID
         context.coordinator.selectedConflictCandidateID = $selectedConflictCandidateID
+        context.coordinator.onSelectPlace = onSelectPlace
         context.coordinator.isApplyingSwiftUIUpdate = true
 
         nsView.removeAnnotations(nsView.annotations)
@@ -161,6 +185,8 @@ struct EventMapView: NSViewRepresentable {
             return TracesMapAnnotation(
                 eventID: event.id,
                 candidateID: primaryCandidateID,
+                placeKey: TracesViewModel.placeKey(for: event),
+                placeTitle: TracesViewModel.placeTitle(for: event),
                 label: "",
                 title: event.summary,
                 subtitle: event.location,
@@ -178,6 +204,8 @@ struct EventMapView: NSViewRepresentable {
                 TracesMapAnnotation(
                     eventID: event.id,
                     candidateID: primaryCandidateID,
+                    placeKey: TracesViewModel.placeKey(for: event),
+                    placeTitle: TracesViewModel.placeTitle(for: event),
                     label: currentSelection == primaryCandidateID ? "A*" : "A",
                     title: "A · \(event.summary)",
                     subtitle: event.location,
@@ -193,11 +221,16 @@ struct EventMapView: NSViewRepresentable {
 
             let label = candidateLabel(index + 1)
             let selectedLabel = currentSelection == candidate.id ? "\(label)*" : label
+            let candidatePlaceKey = candidate.placeID.isEmpty
+                ? String(format: "coord:%.5f,%.5f", lat, lon)
+                : "placeID:\(candidate.placeID)"
 
             annotations.append(
                 TracesMapAnnotation(
                     eventID: event.id,
                     candidateID: candidate.id,
+                    placeKey: candidatePlaceKey,
+                    placeTitle: candidate.title,
                     label: selectedLabel,
                     title: "\(label) · \(candidate.title)",
                     subtitle: distanceSubtitle(candidate),
@@ -252,14 +285,17 @@ struct EventMapView: NSViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate {
         var selectedEventID: Binding<String?>
         var selectedConflictCandidateID: Binding<String?>
+        var onSelectPlace: (String, String, String) -> Void
         var isApplyingSwiftUIUpdate = false
 
         init(
             selectedEventID: Binding<String?>,
-            selectedConflictCandidateID: Binding<String?>
+            selectedConflictCandidateID: Binding<String?>,
+            onSelectPlace: @escaping (String, String, String) -> Void
         ) {
             self.selectedEventID = selectedEventID
             self.selectedConflictCandidateID = selectedConflictCandidateID
+            self.onSelectPlace = onSelectPlace
         }
 
         func mapView(_ mapView: MKMapView, didSelect view: MKAnnotationView) {
@@ -272,11 +308,7 @@ struct EventMapView: NSViewRepresentable {
             }
 
             DispatchQueue.main.async {
-                if self.selectedEventID.wrappedValue == nil {
-                    self.selectedEventID.wrappedValue = annotation.eventID
-                    self.selectedConflictCandidateID.wrappedValue = nil
-                    return
-                }
+                self.onSelectPlace(annotation.eventID, annotation.placeKey, annotation.placeTitle)
 
                 if annotation.candidateID == primaryCandidateID {
                     self.selectedConflictCandidateID.wrappedValue = nil
@@ -308,6 +340,8 @@ struct EventMapView: NSViewRepresentable {
 final class TracesMapAnnotation: NSObject, MKAnnotation {
     let eventID: String
     let candidateID: String
+    let placeKey: String
+    let placeTitle: String
     let label: String
     let coordinate: CLLocationCoordinate2D
 
@@ -325,6 +359,8 @@ final class TracesMapAnnotation: NSObject, MKAnnotation {
     init(
         eventID: String,
         candidateID: String,
+        placeKey: String,
+        placeTitle: String,
         label: String,
         title: String,
         subtitle: String,
@@ -332,6 +368,8 @@ final class TracesMapAnnotation: NSObject, MKAnnotation {
     ) {
         self.eventID = eventID
         self.candidateID = candidateID
+        self.placeKey = placeKey
+        self.placeTitle = placeTitle
         self.label = label
         self.annotationTitle = title
         self.annotationSubtitle = subtitle
