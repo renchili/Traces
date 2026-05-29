@@ -3,12 +3,26 @@ import Foundation
 
 // MARK: - Timeline waterfall
 // Owns the right-side time overview. This file renders timed events as vertical
-// blocks, handles overlap columns, date separators, and highlights the selected event.
+// blocks, handles overlap columns, date separators, a sticky current-date bar,
+// and highlights the selected event.
+
+private struct TimelineScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
 
 /// Right-side timeline panel shown in the main three-pane layout.
 struct TimelineWaterfallView: View {
     let events: [ICSEvent]
     @Binding var selectedEventID: String?
+
+    @State private var floatingDate: Date?
+
+    private let hourHeight: CGFloat = 52
+    private let scrollCoordinateSpace = "TimelineScrollSpace"
 
     private var datedEvents: [ICSEvent] {
         events
@@ -28,6 +42,15 @@ struct TimelineWaterfallView: View {
             value: 1,
             to: Calendar.current.startOfDay(for: last)
         )
+    }
+
+    private var selectedEventDate: Date? {
+        guard let selectedEventID else { return nil }
+        return datedEvents.first(where: { $0.id == selectedEventID })?.start
+    }
+
+    private var visibleDate: Date? {
+        floatingDate ?? selectedEventDate ?? dayStart
     }
 
     private var dateRangeText: String {
@@ -85,26 +108,47 @@ struct TimelineWaterfallView: View {
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
+                    floatingDateBar
+
                     ScrollViewReader { reader in
                         ScrollView {
-                            TimelineCanvas(
-                                events: datedEvents,
-                                selectedEventID: $selectedEventID,
-                                dayStart: dayStart,
-                                dayEnd: dayEnd,
-                                availableWidth: width - 24
-                            )
-                            .padding(12)
-                            .id(widthBucket)
+                            VStack(spacing: 0) {
+                                GeometryReader { geometry in
+                                    Color.clear.preference(
+                                        key: TimelineScrollOffsetKey.self,
+                                        value: geometry.frame(in: .named(scrollCoordinateSpace)).minY
+                                    )
+                                }
+                                .frame(height: 0)
+
+                                TimelineCanvas(
+                                    events: datedEvents,
+                                    selectedEventID: $selectedEventID,
+                                    dayStart: dayStart,
+                                    dayEnd: dayEnd,
+                                    availableWidth: width - 24
+                                )
+                                .padding(12)
+                                .id(widthBucket)
+                            }
                         }
+                        .coordinateSpace(name: scrollCoordinateSpace)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .onPreferenceChange(TimelineScrollOffsetKey.self) { minY in
+                            updateFloatingDate(contentMinY: minY)
+                        }
                         .onAppear {
+                            floatingDate = selectedEventDate ?? dayStart
                             scrollToSelected(reader)
                         }
                         .onChange(of: selectedEventID) { _, _ in
+                            if let selectedEventDate {
+                                floatingDate = Calendar.current.startOfDay(for: selectedEventDate)
+                            }
                             scrollToSelected(reader)
                         }
                         .onChange(of: events.map(\.id)) { _, _ in
+                            floatingDate = selectedEventDate ?? dayStart
                             scrollToSelected(reader)
                         }
                     }
@@ -112,6 +156,56 @@ struct TimelineWaterfallView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(.background)
+        }
+    }
+
+    private var floatingDateBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "calendar")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+
+            Text(floatingDateLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.accentColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.accentColor.opacity(0.10))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.accentColor.opacity(0.16))
+                .frame(height: 1)
+        }
+    }
+
+    private var floatingDateLabel: String {
+        guard let visibleDate else { return "Current date" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE, d MMM yyyy"
+        return formatter.string(from: visibleDate)
+    }
+
+    private func updateFloatingDate(contentMinY: CGFloat) {
+        guard let dayStart else { return }
+
+        let scrollOffset = max(0, -contentMinY)
+        let visibleHours = scrollOffset / hourHeight
+        let visibleDate = Calendar.current.date(
+            byAdding: .minute,
+            value: Int(visibleHours * 60),
+            to: dayStart
+        ) ?? dayStart
+
+        let nextDay = Calendar.current.startOfDay(for: visibleDate)
+        let currentDay = Calendar.current.startOfDay(for: floatingDate ?? dayStart)
+
+        if nextDay != currentDay {
+            floatingDate = nextDay
         }
     }
 
