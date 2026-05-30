@@ -3,11 +3,6 @@ import Combine
 import Foundation
 import UniformTypeIdentifiers
 
-// MARK: - Main view model
-// Owns user-visible application state and coordinates services.
-// Views should call this object for actions instead of parsing files, exporting
-// ICS, resolving places, or mutating the event list directly.
-
 @MainActor
 final class TracesViewModel: ObservableObject {
     @Published var events: [ICSEvent] = []
@@ -15,19 +10,14 @@ final class TracesViewModel: ObservableObject {
     @Published var selectedConflictCandidateID: String?
     @Published var selectedPlaceFilterKey: String?
     @Published var selectedPlaceFilterTitle: String?
-    @Published var fileName: String = "Open .ics or Timeline JSON"
-    @Published var query: String = ""
-    @Published var status: String = ""
-    @Published var generatedICS: String = ""
+    @Published var fileName = "Open .ics or Timeline JSON"
+    @Published var query = ""
+    @Published var status = ""
+    @Published var generatedICS = ""
     @Published var isGenerating = false
     @Published var showingGeneratorSettings = false
-    @Published var cacheCount: Int = 0
+    @Published var cacheCount = 0
 
-    // Import/export tracking:
-    // - latestImportEventIDs marks the events touched by the most recent import.
-    // - newlyAddedEventIDs marks events that did not exist before the most recent import.
-    // - exportedEventIDs marks events successfully exported at least once.
-    // - selectedExportEventIDs is the explicit single/multi-select export set.
     @Published private(set) var latestImportEventIDs: Set<String> = []
     @Published private(set) var newlyAddedEventIDs: Set<String> = []
     @Published private(set) var exportedEventIDs: Set<String> = []
@@ -35,90 +25,47 @@ final class TracesViewModel: ObservableObject {
 
     var googleAPIKey: String {
         get { UserDefaults.standard.string(forKey: "traces.googleAPIKey") ?? "" }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "traces.googleAPIKey")
-            objectWillChange.send()
-        }
+        set { UserDefaults.standard.set(newValue, forKey: "traces.googleAPIKey"); objectWillChange.send() }
     }
 
     var lastDays: Int {
-        get {
-            let value = UserDefaults.standard.integer(forKey: "traces.lastDays")
-            return value == 0 ? 14 : value
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "traces.lastDays")
-            objectWillChange.send()
-        }
+        get { let value = UserDefaults.standard.integer(forKey: "traces.lastDays"); return value == 0 ? 14 : value }
+        set { UserDefaults.standard.set(newValue, forKey: "traces.lastDays"); objectWillChange.send() }
     }
 
     var minStayMinutes: Double {
-        get {
-            let value = UserDefaults.standard.double(forKey: "traces.minStayMinutes")
-            return value == 0 ? 15 : value
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "traces.minStayMinutes")
-            objectWillChange.send()
-        }
+        get { let value = UserDefaults.standard.double(forKey: "traces.minStayMinutes"); return value == 0 ? 15 : value }
+        set { UserDefaults.standard.set(newValue, forKey: "traces.minStayMinutes"); objectWillChange.send() }
     }
 
     var removeHomeOverMinutes: Double {
-        get {
-            let value = UserDefaults.standard.double(forKey: "traces.removeHomeOverMinutes")
-            return value == 0 ? 60 : value
-        }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "traces.removeHomeOverMinutes")
-            objectWillChange.send()
-        }
+        get { let value = UserDefaults.standard.double(forKey: "traces.removeHomeOverMinutes"); return value == 0 ? 60 : value }
+        set { UserDefaults.standard.set(newValue, forKey: "traces.removeHomeOverMinutes"); objectWillChange.send() }
     }
 
-    var selectedEvent: ICSEvent? {
-        events.first { $0.id == selectedEventID }
-    }
+    var selectedEvent: ICSEvent? { events.first { $0.id == selectedEventID } }
 
-    // Raw filtered events keep the underlying chronological order for map/timeline logic.
-    // Filtering combines the free-text search and the optional map-selected place filter.
     var filteredEvents: [ICSEvent] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
         return events.filter { event in
-            let matchesPlace: Bool
-            if let selectedPlaceFilterKey {
-                matchesPlace = Self.placeKey(for: event) == selectedPlaceFilterKey
-            } else {
-                matchesPlace = true
-            }
-
-            let matchesQuery: Bool
-            if q.isEmpty {
-                matchesQuery = true
-            } else {
-                matchesQuery = event.summary.lowercased().contains(q)
-                    || event.location.lowercased().contains(q)
-                    || event.description.lowercased().contains(q)
-            }
-
+            let matchesPlace = selectedPlaceFilterKey.map { Self.placeKey(for: event) == $0 } ?? true
+            let matchesQuery = q.isEmpty
+                || event.summary.lowercased().contains(q)
+                || event.location.lowercased().contains(q)
+                || event.description.lowercased().contains(q)
             return matchesPlace && matchesQuery
         }
     }
 
-    // Sidebar display order is newest first so newly imported Timeline JSON is immediately visible.
     var displayEvents: [ICSEvent] {
         filteredEvents.sorted { lhs, rhs in
             let lhsDate = lhs.start ?? lhs.end ?? .distantPast
             let rhsDate = rhs.start ?? rhs.end ?? .distantPast
-
-            if lhsDate == rhsDate {
-                return lhs.summary.localizedCaseInsensitiveCompare(rhs.summary) == .orderedAscending
-            }
-
+            if lhsDate == rhsDate { return lhs.summary.localizedCaseInsensitiveCompare(rhs.summary) == .orderedAscending }
             return lhsDate > rhsDate
         }
     }
 
-    // Actual event list used by export. Export is now explicit selection based.
     var exportEvents: [ICSEvent] {
         guard !selectedExportEventIDs.isEmpty else { return [] }
         return events.filter { selectedExportEventIDs.contains($0.id) }
@@ -127,12 +74,8 @@ final class TracesViewModel: ObservableObject {
     var exportScopeDescription: String {
         let selectedCount = exportEvents.count
         let totalCount = events.count
-        let unexportedCount = events.filter { !exportedEventIDs.contains($0.id) }.count
-
-        if selectedCount == totalCount && totalCount > 0 {
-            return "Full export selected · \(selectedCount) events"
-        }
-
+        let unexportedCount = events.filter { !isExported($0) }.count
+        if selectedCount == totalCount && totalCount > 0 { return "Full export selected · \(selectedCount) events" }
         return "Selected export · \(selectedCount) events · \(unexportedCount) unexported"
     }
 
@@ -142,61 +85,27 @@ final class TracesViewModel: ObservableObject {
         return "\(title) · \(eventsForPlaceKey(selectedPlaceFilterKey).count) visits"
     }
 
-    func onAppear() {
-        restoreLastSession()
-        refreshCacheCount()
-    }
-
-    func didSelectEventChanged() {
-        selectedConflictCandidateID = nil
-        saveCurrentSession()
-    }
-
-    // MARK: - Place filter helpers
+    func onAppear() { restoreLastSession(); refreshCacheCount() }
+    func didSelectEventChanged() { selectedConflictCandidateID = nil; saveCurrentSession() }
 
     static func placeKey(for event: ICSEvent) -> String {
-        if let placeID = extractPlaceID(fromText: "\(event.url)\n\(event.description)\n\(event.location)") {
-            return "placeID:\(placeID)"
-        }
-
-        if let lat = event.lat, let lon = event.lon {
-            return String(format: "coord:%.5f,%.5f", lat, lon)
-        }
-
-        let normalizedLocation = event.location
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-
-        if !normalizedLocation.isEmpty {
-            return "location:\(normalizedLocation)"
-        }
-
+        if let placeID = extractPlaceID(fromText: "\(event.url)\n\(event.description)\n\(event.location)") { return "placeID:\(placeID)" }
+        if let lat = event.lat, let lon = event.lon { return String(format: "coord:%.5f,%.5f", lat, lon) }
+        let normalizedLocation = event.location.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        if !normalizedLocation.isEmpty { return "location:\(normalizedLocation)" }
         return "title:\(event.summary.lowercased())"
     }
 
     static func placeTitle(for event: ICSEvent) -> String {
-        if !event.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return event.summary
-        }
-
-        if !event.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return event.location
-        }
-
+        if !event.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return event.summary }
+        if !event.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return event.location }
         return placeKey(for: event)
     }
 
     func selectPlaceFilter(eventID: String, placeKey: String, placeTitle: String) {
         selectedPlaceFilterKey = placeKey
         selectedPlaceFilterTitle = placeTitle
-
-        if let lastVisit = lastEventForPlaceKey(placeKey) {
-            selectedEventID = lastVisit.id
-        } else {
-            selectedEventID = eventID
-        }
-
+        selectedEventID = lastEventForPlaceKey(placeKey)?.id ?? eventID
         selectedConflictCandidateID = nil
         status = "Filtered by place: \(placeTitle). Showing \(filteredEvents.count) visits."
         saveCurrentSession()
@@ -209,42 +118,21 @@ final class TracesViewModel: ObservableObject {
         saveCurrentSession()
     }
 
-    func eventsForPlaceKey(_ placeKey: String) -> [ICSEvent] {
-        events.filter { Self.placeKey(for: $0) == placeKey }
-    }
+    func eventsForPlaceKey(_ placeKey: String) -> [ICSEvent] { events.filter { Self.placeKey(for: $0) == placeKey } }
 
     func lastEventForPlaceKey(_ placeKey: String) -> ICSEvent? {
         eventsForPlaceKey(placeKey).max { lhs, rhs in
-            let lhsDate = lhs.start ?? lhs.end ?? .distantPast
-            let rhsDate = rhs.start ?? rhs.end ?? .distantPast
-            return lhsDate < rhsDate
+            (lhs.start ?? lhs.end ?? .distantPast) < (rhs.start ?? rhs.end ?? .distantPast)
         }
     }
 
-    // MARK: - Export selection helpers
-
-    func isLatestImport(_ event: ICSEvent) -> Bool {
-        latestImportEventIDs.contains(event.id)
-    }
-
-    func isNewlyAdded(_ event: ICSEvent) -> Bool {
-        newlyAddedEventIDs.contains(event.id)
-    }
-
-    func isUnexported(_ event: ICSEvent) -> Bool {
-        !exportedEventIDs.contains(event.id)
-    }
-
-    func isSelectedForExport(_ event: ICSEvent) -> Bool {
-        selectedExportEventIDs.contains(event.id)
-    }
+    func isLatestImport(_ event: ICSEvent) -> Bool { latestImportEventIDs.contains(event.id) }
+    func isNewlyAdded(_ event: ICSEvent) -> Bool { newlyAddedEventIDs.contains(event.id) }
+    func isUnexported(_ event: ICSEvent) -> Bool { !isExported(event) }
+    func isSelectedForExport(_ event: ICSEvent) -> Bool { selectedExportEventIDs.contains(event.id) }
 
     func toggleExportSelection(_ eventID: String) {
-        if selectedExportEventIDs.contains(eventID) {
-            selectedExportEventIDs.remove(eventID)
-        } else {
-            selectedExportEventIDs.insert(eventID)
-        }
+        if selectedExportEventIDs.contains(eventID) { selectedExportEventIDs.remove(eventID) } else { selectedExportEventIDs.insert(eventID) }
         generatedICS = currentICSText()
         saveCurrentSession()
     }
@@ -257,7 +145,7 @@ final class TracesViewModel: ObservableObject {
     }
 
     func selectUnexportedForExport() {
-        selectedExportEventIDs = Set(events.filter { !exportedEventIDs.contains($0.id) }.map(\.id))
+        selectedExportEventIDs = Set(events.filter { !isExported($0) }.map(\.id))
         generatedICS = currentICSText()
         status = "Selected unexported events: \(exportEvents.count) events."
         saveCurrentSession()
@@ -285,32 +173,34 @@ final class TracesViewModel: ObservableObject {
     }
 
     func markCurrentExported() {
-        let exportedIDs = Set(exportEvents.map(\.id))
-        exportedEventIDs.formUnion(exportedIDs)
+        let exportedEvents = exportEvents
+        exportedEventIDs.formUnion(Set(exportedEvents.map(\.id)))
+        exportedEventIDs.formUnion(Set(exportedEvents.map { Self.exportTrackingKey(for: $0) }))
         generatedICS = currentICSText()
         saveCurrentSession()
     }
 
+    private func isExported(_ event: ICSEvent) -> Bool {
+        exportedEventIDs.contains(event.id) || exportedEventIDs.contains(Self.exportTrackingKey(for: event))
+    }
+
+    private static func exportTrackingKey(for event: ICSEvent) -> String {
+        "upsert:\(EventUpsertService.eventUpsertKey(event))"
+    }
+
     func promoteSelectedConflictCandidate() {
-        guard
-            let selectedEventID = selectedEventID,
-            let conflictCandidateID = selectedConflictCandidateID,
-            let eventIndex = events.firstIndex(where: { $0.id == selectedEventID }),
-            let candidate = events[eventIndex].suppressedCandidates.first(where: { $0.id == conflictCandidateID })
-        else {
-            return
-        }
+        guard let selectedEventID,
+              let conflictCandidateID = selectedConflictCandidateID,
+              let eventIndex = events.firstIndex(where: { $0.id == selectedEventID }),
+              let candidate = events[eventIndex].suppressedCandidates.first(where: { $0.id == conflictCandidateID }) else { return }
 
-        let oldEvent = events[eventIndex]
-        let promoted = promote(candidate: candidate, in: oldEvent)
-
+        let promoted = promote(candidate: candidate, in: events[eventIndex])
         events[eventIndex] = promoted
         latestImportEventIDs.insert(promoted.id)
         selectedExportEventIDs.insert(promoted.id)
         exportedEventIDs.remove(promoted.id)
-        if let selectedPlaceFilterKey, Self.placeKey(for: promoted) != selectedPlaceFilterKey {
-            clearPlaceFilter()
-        }
+        exportedEventIDs.remove(Self.exportTrackingKey(for: promoted))
+        if let selectedPlaceFilterKey, Self.placeKey(for: promoted) != selectedPlaceFilterKey { clearPlaceFilter() }
         self.selectedConflictCandidateID = nil
         generatedICS = ICSWriter.makeICS(events: exportEvents)
         status = "Replaced final event location with \(candidate.title). Marked event as unexported."
@@ -318,116 +208,37 @@ final class TracesViewModel: ObservableObject {
     }
 
     private func promote(candidate: SuppressedCandidate, in event: ICSEvent) -> ICSEvent {
-        let oldPrimary = SuppressedCandidate(
-            id: "old-primary-\(event.id)",
-            title: event.summary,
-            placeID: extractPlaceID(from: event) ?? "",
-            lat: event.lat,
-            lon: event.lon,
-            start: event.start,
-            end: event.end,
-            distanceMetersFromPrimary: distanceMeters(
-                lat1: candidate.lat,
-                lon1: candidate.lon,
-                lat2: event.lat,
-                lon2: event.lon
-            )
-        )
-
+        let oldPrimary = SuppressedCandidate(id: "old-primary-\(event.id)", title: event.summary, placeID: extractPlaceID(from: event) ?? "", lat: event.lat, lon: event.lon, start: event.start, end: event.end, distanceMetersFromPrimary: distanceMeters(lat1: candidate.lat, lon1: candidate.lon, lat2: event.lat, lon2: event.lon))
         var newSuppressed = event.suppressedCandidates.filter { $0.id != candidate.id }
         newSuppressed.insert(oldPrimary, at: 0)
-
         let normalizedSuppressed = newSuppressed.map { item in
-            SuppressedCandidate(
-                id: item.id,
-                title: item.title,
-                placeID: item.placeID,
-                lat: item.lat,
-                lon: item.lon,
-                start: item.start,
-                end: item.end,
-                distanceMetersFromPrimary: distanceMeters(
-                    lat1: candidate.lat,
-                    lon1: candidate.lon,
-                    lat2: item.lat,
-                    lon2: item.lon
-                )
-            )
+            SuppressedCandidate(id: item.id, title: item.title, placeID: item.placeID, lat: item.lat, lon: item.lon, start: item.start, end: item.end, distanceMetersFromPrimary: distanceMeters(lat1: candidate.lat, lon1: candidate.lon, lat2: item.lat, lon2: item.lon))
         }
-
         let newLocation = candidateLocation(candidate)
         let newURL = candidateMapURL(candidate)
-        let newDescription = updatedDescription(
-            oldDescription: event.description,
-            newTitle: candidate.title,
-            newLocation: newLocation,
-            newURL: newURL
-        )
-
-        return ICSEvent(
-            id: event.id,
-            summary: candidate.title,
-            location: newLocation,
-            description: newDescription,
-            url: newURL,
-            start: event.start,
-            end: event.end,
-            lat: candidate.lat,
-            lon: candidate.lon,
-            suppressedCandidates: normalizedSuppressed
-        )
+        let newDescription = updatedDescription(oldDescription: event.description, newTitle: candidate.title, newLocation: newLocation, newURL: newURL)
+        return ICSEvent(id: event.id, summary: candidate.title, location: newLocation, description: newDescription, url: newURL, start: event.start, end: event.end, lat: candidate.lat, lon: candidate.lon, suppressedCandidates: normalizedSuppressed)
     }
 
     private func candidateLocation(_ candidate: SuppressedCandidate) -> String {
-        if let lat = candidate.lat, let lon = candidate.lon {
-            return String(format: "%.6f, %.6f", lat, lon)
-        }
-
-        if !candidate.placeID.isEmpty {
-            return "Place ID: \(candidate.placeID)"
-        }
-
+        if let lat = candidate.lat, let lon = candidate.lon { return String(format: "%.6f, %.6f", lat, lon) }
+        if !candidate.placeID.isEmpty { return "Place ID: \(candidate.placeID)" }
         return candidate.title
     }
 
     private func candidateMapURL(_ candidate: SuppressedCandidate) -> String {
-        if !candidate.placeID.isEmpty {
-            return "https://www.google.com/maps/place/?q=place_id:\(candidate.placeID)"
-        }
-
-        if let lat = candidate.lat, let lon = candidate.lon {
-            return String(
-                format: "https://www.google.com/maps/search/?api=1&query=%.7f,%.7f",
-                lat,
-                lon
-            )
-        }
-
+        if !candidate.placeID.isEmpty { return "https://www.google.com/maps/place/?q=place_id:\(candidate.placeID)" }
+        if let lat = candidate.lat, let lon = candidate.lon { return String(format: "https://www.google.com/maps/search/?api=1&query=%.7f,%.7f", lat, lon) }
         return ""
     }
 
-    private func updatedDescription(
-        oldDescription: String,
-        newTitle: String,
-        newLocation: String,
-        newURL: String
-    ) -> String {
+    private func updatedDescription(oldDescription: String, newTitle: String, newLocation: String, newURL: String) -> String {
         var lines = oldDescription.components(separatedBy: .newlines)
-
-        lines.removeAll {
-            $0.hasPrefix("Manual replacement:")
-            || $0.hasPrefix("Final selected location:")
-            || $0.hasPrefix("Final selected map:")
-        }
-
+        lines.removeAll { $0.hasPrefix("Manual replacement:") || $0.hasPrefix("Final selected location:") || $0.hasPrefix("Final selected map:") }
         lines.append("")
         lines.append("Manual replacement: user selected conflict candidate as final event.")
         lines.append("Final selected location: \(newTitle) · \(newLocation)")
-
-        if !newURL.isEmpty {
-            lines.append("Final selected map: \(newURL)")
-        }
-
+        if !newURL.isEmpty { lines.append("Final selected map: \(newURL)") }
         return lines.joined(separator: "\n")
     }
 
@@ -437,73 +248,40 @@ final class TracesViewModel: ObservableObject {
 
     private static func extractPlaceID(fromText text: String) -> String? {
         if let range = text.range(of: "place_id:") {
-            let suffix = text[range.upperBound...]
-            let placeID = suffix.prefix { char in
-                char.isLetter || char.isNumber || char == "_" || char == "-"
-            }
-
-            let value = String(placeID)
+            let value = String(text[range.upperBound...].prefix { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" })
             return value.isEmpty ? nil : value
         }
-
         if let range = text.range(of: "Place ID:") {
-            let suffix = text[range.upperBound...]
-            let trimmed = suffix.trimmingCharacters(in: .whitespacesAndNewlines)
-            let placeID = trimmed.prefix { char in
-                char.isLetter || char.isNumber || char == "_" || char == "-"
-            }
-
-            let value = String(placeID)
+            let trimmed = text[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = String(trimmed.prefix { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" })
             return value.isEmpty ? nil : value
         }
-
         return nil
     }
 
-    private func distanceMeters(
-        lat1: Double?,
-        lon1: Double?,
-        lat2: Double?,
-        lon2: Double?
-    ) -> Double? {
+    private func distanceMeters(lat1: Double?, lon1: Double?, lat2: Double?, lon2: Double?) -> Double? {
         guard let lat1, let lon1, let lat2, let lon2 else { return nil }
-
         let r = 6_371_000.0
         let p1 = lat1 * .pi / 180
         let p2 = lat2 * .pi / 180
         let dp = (lat2 - lat1) * .pi / 180
         let dl = (lon2 - lon1) * .pi / 180
-
-        let a =
-            sin(dp / 2) * sin(dp / 2)
-            + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
-
+        let a = sin(dp / 2) * sin(dp / 2) + cos(p1) * cos(p2) * sin(dl / 2) * sin(dl / 2)
         return 2 * r * asin(sqrt(a))
     }
 
     func openFile(allowedExtensions: [String]) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = allowedExtensions.compactMap {
-            UTType(filenameExtension: $0)
-        }
+        panel.allowedContentTypes = allowedExtensions.compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-
-        if panel.runModal() == .OK, let url = panel.url {
-            loadFile(url)
-        }
+        if panel.runModal() == .OK, let url = panel.url { loadFile(url) }
     }
 
     func loadFile(_ url: URL) {
         do {
             let data = try Data(contentsOf: url)
-            let ext = url.pathExtension.lowercased()
-
-            if ext == "json" {
-                importTimelineJSON(data: data, fileName: url.lastPathComponent)
-            } else {
-                openICSPreview(url: url)
-            }
+            if url.pathExtension.lowercased() == "json" { importTimelineJSON(data: data, fileName: url.lastPathComponent) } else { openICSPreview(url: url) }
         } catch {
             status = "Failed: \(error.localizedDescription)"
             isGenerating = false
@@ -515,7 +293,6 @@ final class TracesViewModel: ObservableObject {
             let text = try String(contentsOf: url, encoding: .utf8)
             let parsed = ICSParser.parse(text)
             let parsedIDs = Set(parsed.map(\.id))
-
             events = parsed
             latestImportEventIDs = parsedIDs
             newlyAddedEventIDs = parsedIDs
@@ -527,7 +304,6 @@ final class TracesViewModel: ObservableObject {
             selectedConflictCandidateID = nil
             fileName = url.lastPathComponent
             status = "Loaded \(parsed.count) events from ICS preview. Selected loaded file for export."
-
             saveCurrentSession()
         } catch {
             events = []
@@ -541,76 +317,63 @@ final class TracesViewModel: ObservableObject {
             selectedConflictCandidateID = nil
             status = "Failed: \(error.localizedDescription)"
             isGenerating = false
-
             saveCurrentSession()
         }
     }
 
     func importTimelineJSON(data: Data, fileName: String) {
-        let options = TimelineOptions(
-            lastDays: lastDays,
-            minStayMinutes: minStayMinutes,
-            removeHomeOverMinutes: removeHomeOverMinutes
-        )
-
+        let options = TimelineOptions(lastDays: lastDays, minStayMinutes: minStayMinutes, removeHomeOverMinutes: removeHomeOverMinutes)
         let oldEvents = events
         let oldEventIDs = Set(oldEvents.map(\.id))
+        let oldEventKeys = Set(oldEvents.map { Self.exportTrackingKey(for: $0) })
+        let oldExportedEventIDs = exportedEventIDs
 
         isGenerating = true
-        status = googleAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "Importing with local cache/fallback only."
-            : "Importing and resolving unique placeIDs with local cache first..."
+        status = googleAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Importing with local cache/fallback only." : "Importing and resolving unique placeIDs with local cache first..."
 
         Task {
             do {
-                let importedEvents = try await TimelineProcessor.generateEvents(
-                    from: data,
-                    options: options,
-                    apiKey: googleAPIKey
-                )
-
-                let mergeResult = EventUpsertService.merge(
-                    existing: oldEvents,
-                    imported: importedEvents
-                )
-
+                let importedEvents = try await TimelineProcessor.generateEvents(from: data, options: options, apiKey: googleAPIKey)
+                let mergeResult = EventUpsertService.merge(existing: oldEvents, imported: importedEvents)
                 let cacheCount = await LocationCacheStore.shared.count()
                 let importedIDs = Set(importedEvents.map(\.id))
-                let newlyAddedIDs = importedIDs.subtracting(oldEventIDs)
-                let updatedImportedIDs = importedIDs.intersection(oldEventIDs)
-                let exportScopedEvents = mergeResult.events.filter { importedIDs.contains($0.id) }
-                let icsText = ICSWriter.makeICS(events: exportScopedEvents.isEmpty ? importedEvents : exportScopedEvents)
+                let newlyAddedIDs = Set(importedEvents.filter { event in
+                    let key = Self.exportTrackingKey(for: event)
+                    return !oldEventIDs.contains(event.id) && !oldEventKeys.contains(key)
+                }.map(\.id))
+                let updatedImportedIDs = Set(importedEvents.filter { event in
+                    let key = Self.exportTrackingKey(for: event)
+                    return oldEventIDs.contains(event.id) || oldEventKeys.contains(key)
+                }.map(\.id))
+                let unexportedImportedIDs = Set(importedEvents.filter { event in
+                    let key = Self.exportTrackingKey(for: event)
+                    return !oldExportedEventIDs.contains(event.id) && !oldExportedEventIDs.contains(key)
+                }.map(\.id))
+                let exportScopedEvents = mergeResult.events.filter { unexportedImportedIDs.contains($0.id) }
+                let icsText = ICSWriter.makeICS(events: exportScopedEvents)
                 let newestImportedEventID = importedEvents.max { lhs, rhs in
-                    let lhsDate = lhs.start ?? lhs.end ?? .distantPast
-                    let rhsDate = rhs.start ?? rhs.end ?? .distantPast
-                    return lhsDate < rhsDate
+                    (lhs.start ?? lhs.end ?? .distantPast) < (rhs.start ?? rhs.end ?? .distantPast)
                 }?.id
 
                 await MainActor.run {
                     self.events = mergeResult.events
                     self.latestImportEventIDs = importedIDs
                     self.newlyAddedEventIDs = newlyAddedIDs
-                    self.selectedExportEventIDs = importedIDs
-                    self.exportedEventIDs.subtract(importedIDs)
+                    self.selectedExportEventIDs = unexportedImportedIDs
                     self.selectedPlaceFilterKey = nil
                     self.selectedPlaceFilterTitle = nil
                     self.generatedICS = icsText
-
-                    if let newestImportedEventID,
-                       mergeResult.events.contains(where: { $0.id == newestImportedEventID }) {
+                    if let newestImportedEventID, mergeResult.events.contains(where: { $0.id == newestImportedEventID }) {
                         self.selectedEventID = newestImportedEventID
                         self.selectedConflictCandidateID = nil
-                    } else if self.selectedEventID == nil
-                        || !mergeResult.events.contains(where: { $0.id == self.selectedEventID }) {
+                    } else if self.selectedEventID == nil || !mergeResult.events.contains(where: { $0.id == self.selectedEventID }) {
                         self.selectedEventID = mergeResult.events.last?.id
                         self.selectedConflictCandidateID = nil
                     }
-
                     self.fileName = "Merged: \(fileName)"
                     self.cacheCount = cacheCount
-                    self.status = "Imported \(importedEvents.count). Added \(mergeResult.addedCount), updated \(mergeResult.updatedCount). Selected latest import for export: \(self.exportEvents.count). New: \(newlyAddedIDs.count), re-imported/updated: \(updatedImportedIDs.count). Cache: \(cacheCount)."
+                    self.status = "Imported \(importedEvents.count). Added \(mergeResult.addedCount), updated \(mergeResult.updatedCount). Selected unexported latest import for export: \(self.exportEvents.count). New: \(newlyAddedIDs.count), re-imported/updated: \(updatedImportedIDs.count). Cache: \(cacheCount)."
                     self.isGenerating = false
-
                     self.saveCurrentSession()
                 }
             } catch {
@@ -623,22 +386,14 @@ final class TracesViewModel: ObservableObject {
         }
     }
 
-    func currentICSText() -> String {
-        ICSWriter.makeICS(events: exportEvents)
-    }
-
-    func exportICS() {
-        generatedICS = currentICSText()
-    }
+    func currentICSText() -> String { ICSWriter.makeICS(events: exportEvents) }
+    func exportICS() { generatedICS = currentICSText() }
 
     func restoreLastSession() {
         Task {
             let session = await SessionStore.shared.load()
-
             guard let session else { return }
-
             let cacheCount = await LocationCacheStore.shared.count()
-
             await MainActor.run {
                 self.events = session.events
                 self.selectedEventID = session.selectedEventID
@@ -651,33 +406,16 @@ final class TracesViewModel: ObservableObject {
                 self.latestImportEventIDs = session.latestImportEventIDs
                 self.newlyAddedEventIDs = session.newlyAddedEventIDs
                 self.exportedEventIDs = session.exportedEventIDs
-                self.selectedExportEventIDs = session.selectedExportEventIDs.isEmpty
-                    ? session.latestImportEventIDs
-                    : session.selectedExportEventIDs
-
-                if !session.events.isEmpty {
-                    self.status = "Restored \(session.events.count) events from last session. \(self.exportScopeDescription)."
-                }
+                self.exportedEventIDs.formUnion(session.events.filter { session.exportedEventIDs.contains($0.id) }.map { Self.exportTrackingKey(for: $0) })
+                self.selectedExportEventIDs = session.selectedExportEventIDs.isEmpty ? session.latestImportEventIDs : session.selectedExportEventIDs
+                if !session.events.isEmpty { self.status = "Restored \(session.events.count) events from last session. \(self.exportScopeDescription)." }
             }
         }
     }
 
     func saveCurrentSession() {
-        let session = TracesSession(
-            events: events,
-            selectedEventID: selectedEventID,
-            fileName: fileName,
-            generatedICS: generatedICS,
-            savedAt: Date(),
-            latestImportEventIDs: latestImportEventIDs,
-            newlyAddedEventIDs: newlyAddedEventIDs,
-            exportedEventIDs: exportedEventIDs,
-            selectedExportEventIDs: selectedExportEventIDs
-        )
-
-        Task {
-            await SessionStore.shared.save(session)
-        }
+        let session = TracesSession(events: events, selectedEventID: selectedEventID, fileName: fileName, generatedICS: generatedICS, savedAt: Date(), latestImportEventIDs: latestImportEventIDs, newlyAddedEventIDs: newlyAddedEventIDs, exportedEventIDs: exportedEventIDs, selectedExportEventIDs: selectedExportEventIDs)
+        Task { await SessionStore.shared.save(session) }
     }
 
     func clearLastSession() {
@@ -694,19 +432,13 @@ final class TracesViewModel: ObservableObject {
         query = ""
         status = "Last session cleared."
         generatedICS = ""
-
-        Task {
-            await SessionStore.shared.clear()
-        }
+        Task { await SessionStore.shared.clear() }
     }
 
     func refreshCacheCount() {
         Task {
             let count = await LocationCacheStore.shared.count()
-
-            await MainActor.run {
-                self.cacheCount = count
-            }
+            await MainActor.run { self.cacheCount = count }
         }
     }
 
@@ -714,11 +446,7 @@ final class TracesViewModel: ObservableObject {
         Task {
             await LocationCacheStore.shared.clear()
             let count = await LocationCacheStore.shared.count()
-
-            await MainActor.run {
-                self.cacheCount = count
-                self.status = "Location cache cleared."
-            }
+            await MainActor.run { self.cacheCount = count; self.status = "Location cache cleared." }
         }
     }
 }
