@@ -1,14 +1,68 @@
 {
-  "images" : [
+  "images": [
     {
-      "filename" : "TracesIcon.png",
-      "idiom" : "mac",
-      "scale" : "2x",
-      "size" : "512x512"
+      "filename": "TracesIcon-16.png",
+      "idiom": "mac",
+      "scale": "1x",
+      "size": "16x16"
+    },
+    {
+      "filename": "TracesIcon-32.png",
+      "idiom": "mac",
+      "scale": "2x",
+      "size": "16x16"
+    },
+    {
+      "filename": "TracesIcon-32.png",
+      "idiom": "mac",
+      "scale": "1x",
+      "size": "32x32"
+    },
+    {
+      "filename": "TracesIcon-64.png",
+      "idiom": "mac",
+      "scale": "2x",
+      "size": "32x32"
+    },
+    {
+      "filename": "TracesIcon-128.png",
+      "idiom": "mac",
+      "scale": "1x",
+      "size": "128x128"
+    },
+    {
+      "filename": "TracesIcon-256.png",
+      "idiom": "mac",
+      "scale": "2x",
+      "size": "128x128"
+    },
+    {
+      "filename": "TracesIcon-256.png",
+      "idiom": "mac",
+      "scale": "1x",
+      "size": "256x256"
+    },
+    {
+      "filename": "TracesIcon-512.png",
+      "idiom": "mac",
+      "scale": "2x",
+      "size": "256x256"
+    },
+    {
+      "filename": "TracesIcon-512.png",
+      "idiom": "mac",
+      "scale": "1x",
+      "size": "512x512"
+    },
+    {
+      "filename": "TracesIcon-1024.png",
+      "idiom": "mac",
+      "scale": "2x",
+      "size": "512x512"
     }
   ],
-  "info" : {
-    "author" : "xcode",
-    "version" : 1
+  "info": {
+    "author": "xcode",
+    "version": 1
   }
 }
