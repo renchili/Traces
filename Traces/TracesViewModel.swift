@@ -174,8 +174,11 @@ final class TracesViewModel: ObservableObject {
 
     func markCurrentExported() {
         let exportedEvents = exportEvents
-        exportedEventIDs.formUnion(Set(exportedEvents.map(\.id)))
+        let exportedIDs = Set(exportedEvents.map(\.id))
+        exportedEventIDs.formUnion(exportedIDs)
         exportedEventIDs.formUnion(Set(exportedEvents.map { Self.exportTrackingKey(for: $0) }))
+        newlyAddedEventIDs.subtract(exportedIDs)
+        selectedExportEventIDs.subtract(exportedIDs)
         generatedICS = currentICSText()
         saveCurrentSession()
     }
@@ -404,10 +407,12 @@ final class TracesViewModel: ObservableObject {
                 self.generatedICS = session.generatedICS
                 self.cacheCount = cacheCount
                 self.latestImportEventIDs = session.latestImportEventIDs
-                self.newlyAddedEventIDs = session.newlyAddedEventIDs
                 self.exportedEventIDs = session.exportedEventIDs
                 self.exportedEventIDs.formUnion(session.events.filter { session.exportedEventIDs.contains($0.id) }.map { Self.exportTrackingKey(for: $0) })
-                self.selectedExportEventIDs = session.selectedExportEventIDs.isEmpty ? session.latestImportEventIDs : session.selectedExportEventIDs
+                let restoredExportedIDs = Set(session.events.filter { self.isExported($0) }.map(\.id))
+                self.newlyAddedEventIDs = session.newlyAddedEventIDs.subtracting(restoredExportedIDs)
+                let restoredSelection = session.selectedExportEventIDs.isEmpty ? session.latestImportEventIDs : session.selectedExportEventIDs
+                self.selectedExportEventIDs = restoredSelection.subtracting(restoredExportedIDs)
                 if !session.events.isEmpty { self.status = "Restored \(session.events.count) events from last session. \(self.exportScopeDescription)." }
             }
         }
