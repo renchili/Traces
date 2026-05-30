@@ -1,10 +1,5 @@
 {
   "images" : [
-    {
-      "filename" : "TracesIcon-1024.svg",
-      "idiom" : "universal",
-      "size" : "1024x1024"
-    }
   ],
   "info" : {
     "author" : "xcode",
